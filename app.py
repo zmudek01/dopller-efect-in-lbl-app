@@ -145,7 +145,7 @@ with tab_geom:
         st.dataframe(pd.DataFrame(beacons, columns=["x", "y", "z"]), use_container_width=True)
 
     with col2:
-        st.write("Tabela parametrów 
+        st.write("Tabela parametrów") 
         st.dataframe(config_table(config), use_container_width=True)
 
         with st.expander("Pokaż konfigurację JSON (debug/reprodukowalność)"):
