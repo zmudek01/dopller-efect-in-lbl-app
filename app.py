@@ -55,7 +55,7 @@ st.sidebar.header("Konfiguracja eksperymentu")
 geom_mode = st.sidebar.selectbox("Geometria beaconów", ["Preset", "Ręcznie (tabela)"])
 
 if geom_mode == "Preset":
-    preset = st.sidebar.selectbox("Kształt", ["triangle", "square", "pentagon"])
+    preset = st.sidebar.selectbox("Kształt", ["trójkąt", "kwadrat", "pięciokąt"])
     radius = st.sidebar.number_input("Promień układu [m]", min_value=10.0, value=200.0, step=10.0)
     bz = st.sidebar.number_input("Głębokość beaconów z [m]", value=0.0, step=1.0)
     beacons = make_beacons_preset(preset, radius=radius, z=bz)
@@ -69,7 +69,7 @@ else:
 
 st.sidebar.divider()
 with st.sidebar.expander("Trajektoria", expanded=True):
-    traj_kind = st.selectbox("Typ", ["line", "racetrack"], key="traj_kind")
+    traj_kind = st.selectbox("Typ", ["linia", "racetrack"], key="traj_kind")
     T = st.number_input("Czas symulacji T [s]", min_value=5.0, value=120.0, step=5.0, key="T")
     dt = st.number_input("Krok dt [s]", min_value=0.1, value=1.0, step=0.1, key="dt")
     speed = st.number_input("Prędkość [m/s]", min_value=0.0, value=1.5, step=0.1, key="speed")
@@ -180,11 +180,11 @@ with tab_wls:
     # metryki w formie "kart"
     m = out["summary_wls"]
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("RMSE [m]", f"{m['RMSE']:.3f}")
-    c2.metric("MED [m]", f"{m['MED']:.3f}")
-    c3.metric("P95 [m]", f"{m['P95']:.3f}")
-    c4.metric("MAE [m]", f"{m['MAE']:.3f}")
-    c5.metric("MAX [m]", f"{m['MAX']:.3f}")
+    c1.metric("RMSE – błąd RMS [m]", f"{m['RMSE']:.3f}")
+    c2.metric("MED - błąd typowy [m]", f"{m['MED']:.3f}")
+    c3.metric("P95 - 95% błędów < [m]", f"{m['P95']:.3f}")
+    c4.metric("MAE - średni błąd [m]", f"{m['MAE']:.3f}")
+    c5.metric("MAX - błąd max [m]", f"{m['MAX']:.3f}")
 
     col1, col2 = st.columns(2)
     with col1:
