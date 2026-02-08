@@ -13,11 +13,11 @@ def make_beacons_preset(preset: str, radius: float, z: float = 0.0) -> np.ndarra
     Returns beacons positions (N,3) for preset shapes centered at (0,0,z).
     """
     preset = preset.lower()
-    if preset == "triangle":
+    if preset == "trójkąt":
         angles = np.deg2rad([90, 210, 330])
-    elif preset == "square":
+    elif preset == "kwadrat":
         angles = np.deg2rad([45, 135, 225, 315])
-    elif preset == "pentagon":
+    elif preset == "pięciokąt":
         angles = np.deg2rad([90, 162, 234, 306, 18])
     else:
         raise ValueError("Unknown preset")
@@ -44,7 +44,7 @@ def make_trajectory(kind: str, T: float, dt: float,
     p = np.zeros((K, 3), dtype=float)
     v = np.zeros((K, 3), dtype=float)
 
-    if kind == "line":
+    if kind == "linia":
         for k in range(K):
             p[k, 0:2] = start[0:2] + vxy * t[k]
             p[k, 2] = z
