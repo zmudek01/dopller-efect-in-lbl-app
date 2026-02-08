@@ -45,7 +45,7 @@ def config_table(config: dict) -> pd.DataFrame:
 # ---------- Header ----------
 st.title("Środowisko testowe: estymacja pozycji LBL bez Dopplera vs z Dopplerem")
 st.caption(
-    "A: WLS (tylko zasięgi/TOA) • B: EKF + obserwacje Dopplera (prędkość radialna). "
+
     "Celem jest porównanie metryk błędu pozycji w tych samych scenariuszach."
 )
 
