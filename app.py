@@ -57,7 +57,7 @@ geom_mode = st.sidebar.selectbox("Geometria beaconów", ["Preset", "Ręcznie (ta
 if geom_mode == "Preset":
     preset = st.sidebar.selectbox("Kształt", ["trójkąt", "kwadrat", "pięciokąt"])
     radius = st.sidebar.number_input("Promień układu [m]", min_value=10.0, value=200.0, step=10.0)
-    bz = st.sidebar.number_input("Głębokość beaconów z [m]", value=0.0, step=1.0)
+    bz = st.sidebar.number_input("Głębokość beaconów [m]", value=0.0, step=1.0)
     beacons = make_beacons_preset(preset, radius=radius, z=bz)
 else:
     st.sidebar.write("Wklej/edytuj współrzędne beaconów [m].")
