@@ -1,8 +1,10 @@
 # app.py
 from __future__ import annotations
+
 import io
 import json
 import zipfile
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,6 +13,7 @@ import streamlit as st
 from core import make_beacons_preset, run_single_experiment, run_monte_carlo
 
 st.set_page_config(page_title="LBL (TDOA) + Doppler – środowisko testowe", layout="wide")
+
 
 # ============================================================
 # Helpers
@@ -26,22 +29,16 @@ def _fig(w=7.2, h=4.8):
     return plt.figure(figsize=(w, h), dpi=120)
 
 def legend_outside_right(fig, ax, ncol: int = 1, pad: float = 0.02, shrink: float = 0.78):
-    """
-    Legenda na zewnątrz po prawej stronie.
-    - shrink: ile miejsca zostawić na osie (np. 0.78 => 22% szerokości figury na legendę)
-    - pad: odstęp między osią a legendą
-    """
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
-
     fig.subplots_adjust(right=shrink)
     ax.legend(
         handles, labels,
         loc="center left",
         bbox_to_anchor=(1.0 + pad, 0.5),
         ncol=ncol,
-        frameon=True
+        frameon=True,
     )
 
 def config_table(config: dict) -> pd.DataFrame:
@@ -73,6 +70,14 @@ def config_table(config: dict) -> pd.DataFrame:
 
     return pd.DataFrame(rows, columns=["Parametr", "Wartość", "Jednostka"])
 
+def show_metrics(summary: dict):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
+    c2.metric("MED [m]",  f"{summary['MED']:.3f}")
+    c3.metric("P95 [m]",  f"{summary['P95']:.3f}")
+    c4.metric("MAE [m]",  f"{summary['MAE']:.3f}")
+    c5.metric("MAX [m]",  f"{summary['MAX']:.3f}")
+
 def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
             title: str, label_est: str):
     bxy = np.asarray(beacons, dtype=float)[:, 0:2]
@@ -97,7 +102,8 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
     ally = np.concatenate([bxy[:, 1], txy[:, 1], exy[:, 1]])
     xmin, xmax = float(allx.min()), float(allx.max())
     ymin, ymax = float(ally.min()), float(ally.max())
-    pad = 0.08 * max(xmax - xmin, ymax - ymin, 1.0)
+    span = max(xmax - xmin, ymax - ymin, 1.0)
+    pad = 0.08 * span
     ax.set_xlim(xmin - pad, xmax + pad)
     ax.set_ylim(ymin - pad, ymax + pad)
 
@@ -109,7 +115,7 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
 
     legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
     st.pyplot(fig, clear_figure=True)
-    
+
 def plot_xy_with_dir(
     p_true: np.ndarray,
     p_est: np.ndarray,
@@ -149,38 +155,31 @@ def plot_xy_with_dir(
     ax.set_ylim(ymin - pad, ymax + pad)
 
     if show_dir and (v_dir is not None):
-        try:
-            V = np.asarray(v_dir, dtype=float)
+        V = np.asarray(v_dir, dtype=float)
+        if V.ndim == 2 and V.shape[0] == exy.shape[0] and V.shape[1] >= 2:
+            V2 = V[:, 0:2]
+            sp = np.linalg.norm(V2, axis=1)
+            eps = 1e-12
+            Vn = V2 / (sp[:, None] + eps)
 
-            # Akceptujemy (K,3), (K,2), albo (K,>=2)
-            if V.ndim != 2 or V.shape[0] != exy.shape[0] or V.shape[1] < 2:
-                st.warning(f"Nie rysuję strzałek: v_dir ma shape={getattr(V, 'shape', None)}, a oczekuję (K,2+) gdzie K={exy.shape[0]}.")
-            else:
-                V = V[:, 0:2]
-                sp = np.linalg.norm(V, axis=1)
-                eps = 1e-12
-                Vn = V / (sp[:, None] + eps)  # normalizacja
+            arrow_len = dir_len_frac * span
+            U = Vn[:, 0] * arrow_len
+            W = Vn[:, 1] * arrow_len
 
-                arrow_len = dir_len_frac * span
-                U = Vn[:, 0] * arrow_len
-                W = Vn[:, 1] * arrow_len
-
-                step = max(1, int(dir_step))
-                ax.quiver(
-                    exy[::step, 0], exy[::step, 1],
-                    U[::step], W[::step],
-                    angles="xy",
-                    scale_units="xy",
-                    scale=1.0,
-                    width=0.004,
-                    headwidth=4.5,
-                    headlength=6,
-                    headaxislength=5.5,
-                    zorder=9,
-                    label="Kierunek ruchu"
-                )
-        except Exception as e:
-            st.error(f"Błąd rysowania strzałek: {type(e).__name__}: {e}")
+            step = max(1, int(dir_step))
+            ax.quiver(
+                exy[::step, 0], exy[::step, 1],
+                U[::step], W[::step],
+                angles="xy",
+                scale_units="xy",
+                scale=1.0,
+                width=0.004,
+                headwidth=4.5,
+                headlength=6,
+                headaxislength=5.5,
+                zorder=9,
+                label="Kierunek ruchu",
+            )
 
     ax.set_title(title)
     ax.set_xlabel("x [m]")
@@ -191,18 +190,14 @@ def plot_xy_with_dir(
     legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
     st.pyplot(fig, clear_figure=True)
 
-
-
 def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
     fig = _fig(7.6, 5.0)
     ax = fig.add_subplot(111)
-
     ax.plot(t, e, label=label, linewidth=2)
     ax.set_title(title)
     ax.set_xlabel("t [s]")
     ax.set_ylabel("e(t) [m]")
     _grid(ax)
-
     legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
     st.pyplot(fig, clear_figure=True)
 
@@ -210,7 +205,6 @@ def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, v
                        title: str, max_beacons: int = 5):
     N = vr_true.shape[1]
     nb = min(N, max_beacons)
-
     fig = _fig(12.0, 5.0)
     ax = fig.add_subplot(111)
 
@@ -224,17 +218,9 @@ def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, v
     ax.set_xlabel("t [s]")
     ax.set_ylabel("v_r [m/s]")
     _grid(ax)
-
     legend_outside_right(fig, ax, ncol=2, shrink=0.70, pad=0.02)
     st.pyplot(fig, clear_figure=True)
 
-def show_metrics(summary: dict):
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
-    c2.metric("MED [m]",  f"{summary['MED']:.3f}")
-    c3.metric("P95 [m]",  f"{summary['P95']:.3f}")
-    c4.metric("MAE [m]",  f"{summary['MAE']:.3f}")
-    c5.metric("MAX [m]",  f"{summary['MAX']:.3f}")
 
 # ============================================================
 # UI
@@ -342,14 +328,15 @@ def require_out():
         st.warning("Kliknij **Uruchom** w panelu bocznym.")
         st.stop()
 
+
 # ============================================================
-# Tab: Geometry
+# Tab 0: Geometry
 # ============================================================
 
 with tabs[0]:
     st.subheader("Geometria i parametry eksperymentu")
-
     col1, col2 = st.columns([1, 1])
+
     with col1:
         fig = _fig(7.6, 5.4)
         ax = fig.add_subplot(111)
@@ -360,7 +347,8 @@ with tabs[0]:
         ax.set_title("Rzut XY – geometria beaconów")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
-        _grid(ax); _set_equal(ax)
+        _grid(ax)
+        _set_equal(ax)
         legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
         st.pyplot(fig, clear_figure=True)
 
@@ -375,8 +363,9 @@ with tabs[0]:
 
     st.info("Wyniki pojawią się po kliknięciu **Uruchom**.")
 
+
 # ============================================================
-# Tab: VLS TDOA
+# Tab 1: VLS TDOA
 # ============================================================
 
 with tabs[1]:
@@ -393,31 +382,28 @@ with tabs[1]:
                    "Błąd pozycji w czasie – VLS: TDOA",
                    "e(t) VLS(TDOA)")
 
+
 # ============================================================
-# Tab: VLS TDOA + Doppler
+# Tab 2: VLS TDOA + Doppler
 # ============================================================
 
 with tabs[2]:
     require_out()
     st.subheader("VLS: TDOA + Doppler (per-epoka, LS ważony)")
-
     show_metrics(out["summary_vls_D"])
 
-    show_vr = st.checkbox(
+    show_vr_vls = st.checkbox(
         "Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
         value=False,
-        key="show_vr_vls"
+        key="tab2_show_vr_vls"
     )
-
-    # ✅ checkbox kierunku NA TYM SAMYM poziomie co show_vr
     show_dir_vls = st.checkbox(
         "Pokaż kierunek ruchu (strzałki)",
         value=True,
-        key="show_dir_vlsD"
+        key="tab2_show_dir_vls"
     )
 
     col1, col2 = st.columns(2)
-
     with col1:
         plot_xy_with_dir(
             out["p_true"],
@@ -427,20 +413,22 @@ with tabs[2]:
             "Estymata VLS (TDOA + Doppler)",
             v_dir=out["v_true"],
             show_dir=show_dir_vls,
-            dir_step=12,
-            dir_len_frac=0.08
         )
-
     with col2:
-        plot_error(
-            out["t"],
-            out["e_vls_D"],
-            "Błąd pozycji w czasie – VLS: TDOA + Doppler",
-            "e(t) VLS(TDOA+D)"
-        )
+        plot_error(out["t"], out["e_vls_D"],
+                   "Błąd pozycji w czasie – VLS: TDOA + Doppler",
+                   "e(t) VLS(TDOA+D)")
+
+    if show_vr_vls:
+        if ("vr_true" in out) and ("vr_hats" in out) and ("vr_pred_vlsD" in out):
+            plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_vlsD"],
+                               "v_r(t) – VLS: TDOA + Doppler")
+        else:
+            st.info("Brak danych vr_* w out (vr_true/vr_hats/vr_pred_vlsD). Jeśli chcesz, dopiszemy to w core.py.")
+
 
 # ============================================================
-# Tab: EKF TDOA
+# Tab 3: EKF TDOA
 # ============================================================
 
 with tabs[3]:
@@ -457,61 +445,54 @@ with tabs[3]:
                    "Błąd pozycji w czasie – EKF: TDOA",
                    "e(t) EKF(TDOA)")
 
+
 # ============================================================
-# Tab: EKF TDOA + Doppler
+# Tab 4: EKF TDOA + Doppler
 # ============================================================
 
 with tabs[4]:
     require_out()
     st.subheader("EKF: TDOA + Doppler (robust)")
-
     show_metrics(out["summary_ekf_D"])
 
-    show_vr = st.checkbox(
+    show_vr_ekf = st.checkbox(
         "Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
         value=False,
-        key="show_vr_ekf"
+        key="tab4_show_vr_ekf"
     )
-
     show_dir_ekf = st.checkbox(
         "Pokaż kierunek ruchu (strzałki)",
         value=True,
-        key="show_dir_ekfD"
+        key="tab4_show_dir_ekf"
     )
 
     col1, col2 = st.columns(2)
-    show_dir_vls = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_vlsD")
-
     with col1:
         plot_xy_with_dir(
-            out["p_true"], out["p_vls_D"], out["beacons"],
-            "Trajektoria (XY) – VLS: TDOA + Doppler",
-            "Estymata VLS (TDOA + Doppler)",
-            v_dir=out["v_true"],          # ✅ zawsze jest
-            show_dir=show_dir_vls,
-            dir_step=12,
-            dir_len_frac=0.08
+            out["p_true"],
+            out["p_ekf_D"],
+            out["beacons"],
+            "Trajektoria (XY) – EKF: TDOA + Doppler",
+            "Estymata EKF (TDOA + Doppler)",
+            v_dir=out["v_true"],
+            show_dir=show_dir_ekf,
         )
-
-
     with col2:
-        plot_error(
-            out["t"],
-            out["e_ekf_D"],
-            "Błąd pozycji w czasie – EKF: TDOA + Doppler",
-            "e(t) EKF(TDOA+D)"
-        )
+        plot_error(out["t"], out["e_ekf_D"],
+                   "Błąd pozycji w czasie – EKF: TDOA + Doppler",
+                   "e(t) EKF(TDOA+D)")
 
-    if show_vr:
-        st.write("Porównanie v_r dla pierwszych beaconów (czytelność ograniczona)")
-        plot_vr_timeseries(
-            out["t"],
-            out["vr_true"],
-            out["vr_hats"],
-            out["vr_pred_ekfD"],
-            "v_r(t) – EKF: TDOA + Doppler"
-        )
+    if show_vr_ekf:
+        if ("vr_true" in out) and ("vr_hats" in out) and ("vr_pred_ekfD" in out):
+            plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_ekfD"],
+                               "v_r(t) – EKF: TDOA + Doppler")
+        else:
+            st.info("Brak danych vr_* w out (vr_true/vr_hats/vr_pred_ekfD). Jeśli chcesz, dopiszemy to w core.py.")
 
+
+# ============================================================
+# Tab 5: Comparisons
+# ============================================================
 
 with tabs[5]:
     require_out()
@@ -603,8 +584,9 @@ with tabs[5]:
             (out["e_ekf_D"], "EKF: z Dopplerem"),
         ])
 
+
 # ============================================================
-# Tab: Monte Carlo
+# Tab 6: Monte-Carlo
 # ============================================================
 
 with tabs[6]:
@@ -620,8 +602,9 @@ with tabs[6]:
         st.write("Agregacja (mean/std/min/max)")
         st.dataframe(mc["agg"], use_container_width=True)
 
+
 # ============================================================
-# Tab: Export
+# Tab 7: Export
 # ============================================================
 
 with tabs[7]:
@@ -638,27 +621,21 @@ with tabs[7]:
 
     df_ts = pd.DataFrame({
         "t": out["t"],
-
         "true_x": out["p_true"][:, 0],
         "true_y": out["p_true"][:, 1],
         "true_z": out["p_true"][:, 2],
-
         "vls0_x": out["p_vls_noD"][:, 0],
         "vls0_y": out["p_vls_noD"][:, 1],
         "vls0_z": out["p_vls_noD"][:, 2],
-
         "vlsD_x": out["p_vls_D"][:, 0],
         "vlsD_y": out["p_vls_D"][:, 1],
         "vlsD_z": out["p_vls_D"][:, 2],
-
         "ekf0_x": out["p_ekf_noD"][:, 0],
         "ekf0_y": out["p_ekf_noD"][:, 1],
         "ekf0_z": out["p_ekf_noD"][:, 2],
-
         "ekfD_x": out["p_ekf_D"][:, 0],
         "ekfD_y": out["p_ekf_D"][:, 1],
         "ekfD_z": out["p_ekf_D"][:, 2],
-
         "e_vls0": out["e_vls_noD"],
         "e_vlsD": out["e_vls_D"],
         "e_ekf0": out["e_ekf_noD"],
@@ -677,4 +654,3 @@ with tabs[7]:
         file_name="experiment_bundle.zip",
         mime="application/zip",
     )
-
