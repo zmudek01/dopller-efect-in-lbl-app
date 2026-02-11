@@ -449,7 +449,7 @@ with tabs[4]:
     col1, col2 = st.columns(2)
    show_dir_ekf = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_ekfD")
 
-with col1:
+   with col1:
     plot_xy_with_dir(
         out["p_true"], out["p_ekf_D"], out["beacons"],
         "Trajektoria (XY) – EKF: TDOA + Doppler",
