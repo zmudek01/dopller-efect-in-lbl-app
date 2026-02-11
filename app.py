@@ -406,18 +406,19 @@ with tabs[2]:
                           value=False, key="show_vr_vls")
 
     col1, col2 = st.columns(2)
-    show_dir_vls = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_vlsD")
+   show_dir_vls = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_vlsD")
 
-with col1:
-    plot_xy_with_dir(
-        out["p_true"], out["p_vls_D"], out["beacons"],
-        "Trajektoria (XY) – VLS: TDOA + Doppler",
-        "Estymata VLS (TDOA + Doppler)",
-        v_dir=out.get("v_vls_D", out.get("v_true", None)),  # jeśli v_vls_D jest, to pokaże z estymaty; jak nie ma – weź v_true
-        show_dir=show_dir_vls,
-        dir_step=12,
-        dir_scale=20.0
-    )
+    with col1:
+        plot_xy_with_dir(
+            out["p_true"], out["p_vls_D"], out["beacons"],
+            "Trajektoria (XY) – VLS: TDOA + Doppler",
+            "Estymata VLS (TDOA + Doppler)",
+            v_dir=out["v_true"],          # ✅ zawsze jest
+            show_dir=show_dir_vls,
+            dir_step=12,
+            dir_len_frac=0.08
+        )
+
 
     with col2:
         plot_error(out["t"], out["e_vls_D"],
@@ -470,19 +471,19 @@ with tabs[4]:
     )
 
     col1, col2 = st.columns(2)
+    show_dir_vls = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_vlsD")
 
     with col1:
         plot_xy_with_dir(
-            out["p_true"],
-            out["p_ekf_D"],
-            out["beacons"],
-            "Trajektoria (XY) – EKF: TDOA + Doppler",
-            "Estymata EKF (TDOA + Doppler)",
-            v_dir=out.get("v_ekf_D", out.get("v_true", None)),
-            show_dir=show_dir_ekf,
+            out["p_true"], out["p_vls_D"], out["beacons"],
+            "Trajektoria (XY) – VLS: TDOA + Doppler",
+            "Estymata VLS (TDOA + Doppler)",
+            v_dir=out["v_true"],          # ✅ zawsze jest
+            show_dir=show_dir_vls,
             dir_step=12,
-            dir_scale=20.0
+            dir_len_frac=0.08
         )
+
 
     with col2:
         plot_error(
