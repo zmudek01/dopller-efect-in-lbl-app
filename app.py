@@ -293,7 +293,9 @@ with tabs[0]:
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
         _grid(ax); _set_equal(ax)
-        legend_outside(fig, ax, ncol=1, right=0.80)
+        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
+
 
 
         st.write("Tabela beaconów [m]")
@@ -440,8 +442,9 @@ with tabs[5]:
         ax.set_xlabel("t [s]")
         ax.set_ylabel("e(t) [m]")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
+
 
     with col2:
         fig = _fig(6.8, 5.0)
@@ -452,8 +455,9 @@ with tabs[5]:
         ax.set_xlabel("e [m]")
         ax.set_ylabel("liczność")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
+
 
     # ------------------------------------------------------------
     # 2) EKF: bez vs z Dopplerem
@@ -470,8 +474,8 @@ with tabs[5]:
         ax.set_xlabel("t [s]")
         ax.set_ylabel("e(t) [m]")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
 
     with col2:
         fig = _fig(6.8, 5.0)
@@ -482,8 +486,9 @@ with tabs[5]:
         ax.set_xlabel("e [m]")
         ax.set_ylabel("liczność")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
+
 
     # ------------------------------------------------------------
     # 3) VLS bez Dopplera vs EKF bez Dopplera
@@ -500,8 +505,9 @@ with tabs[5]:
         ax.set_xlabel("t [s]")
         ax.set_ylabel("e(t) [m]")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
+
 
     with col2:
         fig = _fig(6.8, 5.0)
@@ -512,8 +518,9 @@ with tabs[5]:
         ax.set_xlabel("e [m]")
         ax.set_ylabel("liczność")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
+
 
     # ------------------------------------------------------------
     # 4) VLS z Dopplerem vs EKF z Dopplerem
@@ -530,8 +537,8 @@ with tabs[5]:
         ax.set_xlabel("t [s]")
         ax.set_ylabel("e(t) [m]")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+st.pyplot(fig, clear_figure=True)
 
     with col2:
         fig = _fig(6.8, 5.0)
