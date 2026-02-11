@@ -28,7 +28,7 @@ def config_table(config: dict) -> pd.DataFrame:
     b = np.array(config["beacons"], dtype=float)
 
     rows.append(("Liczba beaconów N", b.shape[0], "-"))
-    rows.append(("Beacon referencyjny (TDOA)", config["tdoa"]["ref_idx"] + 1, "nr (1..N)"))
+    rows.append(("Beacon referencyjny TDOA", "B1 (stały)", "-"))
 
     rows.append(("c (prędkość dźwięku)", config["acoustics"]["c"], "m/s"))
     rows.append(("f0 (częstotliwość nośna)", config["acoustics"]["f0"], "Hz"))
@@ -49,15 +49,16 @@ def config_table(config: dict) -> pd.DataFrame:
     rows.append(("q_acc (strojenie EKF)", config["filter"]["q_acc"], "m/s²"))
     rows.append(("robust_k (próg)", config["filter"]["robust_k"], "σ"))
 
-    rows.append(("p_gross (prawd. błędu grubego)", config["gross"]["p_gross"], "-"))
-    rows.append(("gross_R_m (amplituda outlier dla dR)", config["gross"]["gross_R_m"], "m"))
-    rows.append(("gross_vr_mps (amplituda outlier dla vr)", config["gross"]["gross_vr_mps"], "m/s"))
+    rows.append(("Błędy grube: włączone", "TAK" if config["gross"]["enabled"] else "NIE", "-"))
+    rows.append(("p_gross (prawdopodobieństwo)", config["gross"]["p_gross"], "-"))
+    rows.append(("gross_R_m (skok w dR)", config["gross"]["gross_R_m"], "m"))
+    rows.append(("gross_vr_mps (skok w vr)", config["gross"]["gross_vr_mps"], "m/s"))
 
     return pd.DataFrame(rows, columns=["Parametr", "Wartość", "Jednostka"])
 
 # ---------- Header ----------
 st.title("Środowisko testowe: LBL (TDOA) – VLS vs EKF, bez Dopplera i z Dopplerem")
-st.caption("Celem jest porównanie metryk błędu pozycji w tych samych scenariuszach: VLS i EKF, bez Dopplera i z Dopplerem.")
+st.caption("Celem jest porównanie metryk błędu pozycji dla tych samych scenariuszy: VLS i EKF, bez Dopplera i z Dopplerem.")
 
 # ---------- Sidebar ----------
 sb = st.sidebar
@@ -80,12 +81,6 @@ else:
 
 sb.divider()
 
-with sb.expander("TDOA", expanded=True):
-    # wybór beacona referencyjnego: 1..N, wewnętrznie 0..N-1
-    N_tmp = int(beacons.shape[0])
-    ref_idx_ui = sb.number_input("Beacon referencyjny (1..N)", min_value=1, value=1, step=1)
-    ref_idx = int(np.clip(ref_idx_ui - 1, 0, max(0, N_tmp - 1)))
-
 with sb.expander("Trajektoria", expanded=True):
     traj_kind = sb.selectbox("Typ", ["linia", "racetrack"], key="traj_kind")
     T = sb.number_input("Czas symulacji T [s]", min_value=5.0, value=120.0, step=5.0, key="T")
@@ -103,12 +98,23 @@ with sb.expander("Akustyka", expanded=False):
 with sb.expander("Szumy pomiarów (TDOA + Doppler)", expanded=True):
     sigma_tdoa = sb.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
     sigma_vr = sb.number_input("σ_vr (Doppler jako v_r) [m/s]", value=0.05, step=0.01, key="sigma_vr")
-    sb.caption("Uwaga: szum TDOA jest przeliczany na metry: σ_dR = c·σ_tdoa.")
+    sb.caption("Szum TDOA jest przeliczany na metry: σ_dR = c·σ_tdoa. TDOA liczone względem beacona B1.")
 
-with sb.expander("Błędy grube (outliers)", expanded=False):
-    p_gross = sb.number_input("p_gross [-] (prawdopodobieństwo)", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
-    gross_R_m = sb.number_input("gross_R_m [m] (amplituda outlier dR)", min_value=0.0, value=10.0, step=1.0)
-    gross_vr_mps = sb.number_input("gross_vr_mps [m/s] (amplituda outlier vr)", min_value=0.0, value=1.0, step=0.1)
+with sb.expander("Błędy grube (symulacja zakłóceń)", expanded=False):
+    enabled_gross = sb.checkbox("Włącz błędy grube", value=False)
+
+    sb.caption(
+        "Błąd gruby to rzadki, duży skok w pomiarze (np. multipath, błędna detekcja pingu). "
+        "EKF z odpornością powinien go tłumić lepiej niż VLS."
+    )
+
+    # UI „ludzki”: częstotliwość zamiast p
+    every_k = sb.number_input("Średnio co ile epok ma wystąpić zakłócenie?", min_value=1, value=30, step=1)
+    # p_gross ≈ 1/k
+    p_gross = (1.0 / float(every_k)) if enabled_gross else 0.0
+
+    gross_R_m = sb.number_input("Skok w dR [m] (TDOA)", min_value=0.0, value=10.0, step=1.0)
+    gross_vr_mps = sb.number_input("Skok w v_r [m/s] (Doppler)", min_value=0.0, value=1.0, step=0.1)
 
 with sb.expander("Filtr EKF (strojenie + odporność)", expanded=False):
     q_acc = sb.number_input("q_acc [m/s²] (strojenie)", value=0.05, step=0.01, key="q_acc")
@@ -120,6 +126,9 @@ with sb.expander("Monte-Carlo", expanded=False):
     seed0 = sb.number_input("Seed startowy", min_value=1, value=1, step=1, key="seed0")
 
 run_btn = sb.button("Uruchom", type="primary")
+
+# TDOA zawsze względem B1
+ref_idx = 0
 
 config = {
     "beacons": beacons.tolist(),
@@ -135,7 +144,12 @@ config = {
     },
     "acoustics": {"c": float(c), "f0": float(f0)},
     "noise": {"sigma_tdoa": float(sigma_tdoa), "sigma_vr": float(sigma_vr)},
-    "gross": {"p_gross": float(p_gross), "gross_R_m": float(gross_R_m), "gross_vr_mps": float(gross_vr_mps)},
+    "gross": {
+        "enabled": bool(enabled_gross),
+        "p_gross": float(p_gross),
+        "gross_R_m": float(gross_R_m),
+        "gross_vr_mps": float(gross_vr_mps),
+    },
     "filter": {"q_acc": float(q_acc), "robust_k": float(robust_k)},
 }
 
@@ -414,7 +428,6 @@ with tab_mc:
         st.info("Zaznacz **Wykonaj Monte-Carlo** w panelu bocznym, a potem kliknij **Uruchom**.")
     else:
         require_out()
-        # cache MC w session_state
         if st.session_state["mc_out"] is None:
             st.session_state["mc_out"] = run_monte_carlo(config, M=int(M), seed0=int(seed0))
         mc = st.session_state["mc_out"]
