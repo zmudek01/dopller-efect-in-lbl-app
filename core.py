@@ -1,5 +1,6 @@
 # core.py
 from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
@@ -8,6 +9,9 @@ import pandas as pd
 # ============================================================
 
 def make_beacons_preset(preset: str, radius: float, z: float = 0.0) -> np.ndarray:
+    """
+    Returns beacons positions (N,3) for preset shapes centered at (0,0,z).
+    """
     preset = preset.lower()
     if preset == "trójkąt":
         angles = np.deg2rad([90, 210, 330])
@@ -17,14 +21,25 @@ def make_beacons_preset(preset: str, radius: float, z: float = 0.0) -> np.ndarra
         angles = np.deg2rad([90, 162, 234, 306, 18])
     else:
         raise ValueError("Unknown preset")
+
     x = radius * np.cos(angles)
     y = radius * np.sin(angles)
     zarr = np.full_like(x, z, dtype=float)
     return np.column_stack([x, y, zarr]).astype(float)
 
-def make_trajectory(kind: str, T: float, dt: float,
-                    speed: float, heading_deg: float,
-                    start: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+def make_trajectory(
+    kind: str,
+    T: float,
+    dt: float,
+    speed: float,
+    heading_deg: float,
+    start: np.ndarray,
+    z: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Returns time vector t, positions p(t) (K,3), velocities v(t) (K,3)
+    """
     kind = kind.lower()
     t = np.arange(0.0, T + 1e-12, dt)
     K = len(t)
@@ -43,6 +58,7 @@ def make_trajectory(kind: str, T: float, dt: float,
             v[k, 2] = 0.0
 
     elif kind == "racetrack":
+        # prosta + łuk, prosty model demonstracyjny
         L = 0.6 * speed * T
         R = max(10.0, 0.15 * L)
         s = speed * t
@@ -55,7 +71,7 @@ def make_trajectory(kind: str, T: float, dt: float,
                 p[k] = np.array([start[0] - L/2 + sk, start[1] - R, z])
                 v[k] = np.array([speed, 0.0, 0.0])
             elif sk < L + np.pi * R:
-                phi = (sk - L) / R
+                phi = (sk - L) / R  # 0..pi
                 cx, cy = start[0] + L/2, start[1]
                 p[k] = np.array([cx + R*np.cos(-np.pi/2 + phi), cy + R*np.sin(-np.pi/2 + phi), z])
                 v[k] = speed * np.array([-np.sin(-np.pi/2 + phi), np.cos(-np.pi/2 + phi), 0.0])
@@ -73,16 +89,41 @@ def make_trajectory(kind: str, T: float, dt: float,
 
     return t, p, v
 
+
 # ============================================================
 # Measurement models: TDOA + Doppler-as-vr + gross errors
 # ============================================================
 
 def _ranges_and_u(p: np.ndarray, beacons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    diff = p[None, :] - beacons  # (N,3)
-    R = np.linalg.norm(diff, axis=1)  # (N,)
+    """
+    Returns:
+      R (N,) distances
+      u (N,3) unit LOS vectors from beacon i to object (direction of increasing range)
+          u_i = (p - b_i)/||p-b_i||
+    """
+    diff = p[None, :] - beacons
+    R = np.linalg.norm(diff, axis=1)
     R = np.maximum(R, 1e-9)
     u = diff / R[:, None]
     return R, u
+
+
+def _dvr_dp_full(u: np.ndarray, R: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """
+    Full Jacobian for vr_i = u_i^T v wrt position p.
+    For each i:
+      ∂vr_i/∂p = (1/R_i) * (I - u_i u_i^T) v
+    Returns Jp (N,3): each row is the gradient wrt p.
+    """
+    N = u.shape[0]
+    I = np.eye(3, dtype=float)
+    Jp = np.zeros((N, 3), dtype=float)
+    for i in range(N):
+        ui = u[i][:, None]  # (3,1)
+        P = I - ui @ ui.T   # (3,3)
+        Jp[i] = (P @ v) / max(R[i], 1e-9)
+    return Jp
+
 
 def simulate_tdoa_and_vr(
     p: np.ndarray,
@@ -100,113 +141,119 @@ def simulate_tdoa_and_vr(
     gross_scale_vr: float = 10.0,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """
+    Simulate one epoch:
+      - One-way TOA for each beacon with a common bias b (cancels in TDOA)
+      - TDOA formed as dt_i = toa_i - toa_ref
+      - drho_hat = c*dt_hat (in meters)
+      - Doppler provided as radial velocity observation vr_hat (m/s)
+
+    Gross errors:
+      - applied to TOA samples before differencing (more realistic)
+      - applied to vr samples
+
     Returns:
-      drho_hat (N-1,) where drho = c*(t_i - t_ref)  [m]
-      vr_hat   (N,)   radial velocity obs           [m/s]
-      meta: counts of gross errors in this epoch
+      drho_hat (N-1,)   for all i != ref_idx
+      vr_hat   (N,)
+      meta dict with gross error counters
     """
     N = beacons.shape[0]
     R_true, u = _ranges_and_u(p, beacons)
-    vr_true = (u @ v)  # (N,)
+    vr_true = u @ v
 
-    # one-way TOA with common clock bias b (cancels in TDOA)
-    b = rng.normal(0.0, 1e-3)  # bias in seconds (arbitrary, cancels in TDOA)
+    # Common clock bias (cancels in differences)
+    b = rng.normal(0.0, 1e-3)
+
     toa = R_true / c + b
     toa_hat = toa + rng.normal(0.0, sigma_t, size=N)
 
-    # gross errors on TOA before differencing (realistic "bad timestamp")
-    gross_tdoa_ct = 0
-    if gross_enable and gross_p_tdoa > 0:
+    gross_toa_ct = 0
+    if gross_enable and gross_p_tdoa > 0.0:
         mask = rng.random(N) < gross_p_tdoa
         if np.any(mask):
-            toa_hat[mask] += rng.normal(0.0, gross_scale_tdoa * sigma_t, size=np.sum(mask))
-            gross_tdoa_ct = int(np.sum(mask))
+            toa_hat[mask] += rng.normal(0.0, gross_scale_tdoa * sigma_t, size=int(np.sum(mask)))
+            gross_toa_ct = int(np.sum(mask))
 
-    # form TDOA to ref
     idx = np.arange(N)
     idx_oth = idx[idx != ref_idx]
     dt_hat = toa_hat[idx_oth] - toa_hat[ref_idx]
-    drho_hat = c * dt_hat  # [m]
+    drho_hat = c * dt_hat
 
-    # Doppler observation as vr with noise
     vr_hat = vr_true + rng.normal(0.0, sigma_vr, size=N)
 
     gross_vr_ct = 0
-    if gross_enable and gross_p_vr > 0:
+    if gross_enable and gross_p_vr > 0.0:
         mask = rng.random(N) < gross_p_vr
         if np.any(mask):
-            vr_hat[mask] += rng.normal(0.0, gross_scale_vr * sigma_vr, size=np.sum(mask))
+            vr_hat[mask] += rng.normal(0.0, gross_scale_vr * sigma_vr, size=int(np.sum(mask)))
             gross_vr_ct = int(np.sum(mask))
 
-    meta = {"gross_toa_ct": gross_tdoa_ct, "gross_vr_ct": gross_vr_ct}
+    meta = {"gross_toa_ct": gross_toa_ct, "gross_vr_ct": gross_vr_ct}
     return drho_hat, vr_hat, meta
 
+
 # ============================================================
-# VLS / WLS (Gauss-Newton) for:
+# VLS / WLS (Gauss-Newton)
 #   - position only from TDOA
-#   - position+velocity from (TDOA + vr)
+#   - position+velocity from TDOA + vr (Doppler)
 # ============================================================
 
 def vls_position_from_tdoa(
-    drho_hat: np.ndarray,
-    beacons: np.ndarray,
+    drho_hat: np.ndarray,     # (N-1,)
+    beacons: np.ndarray,      # (N,3)
     ref_idx: int,
-    p0: np.ndarray,
+    p0: np.ndarray,           # (3,)
     sigma_drho: float,
     iters: int = 20
 ) -> np.ndarray:
     """
-    Minimize sum_i ((drho_hat_i - (||p-bi||-||p-br||))/sigma_drho)^2
-    drho_hat has length N-1 (all except ref_idx).
+    Minimize sum ((drho_hat - (||p-bi|| - ||p-br||))/sigma_drho)^2
     """
     p = p0.astype(float).copy()
     N = beacons.shape[0]
     idx = np.arange(N)
     idx_oth = idx[idx != ref_idx]
-    br = beacons[ref_idx]
 
     w = 1.0 / (sigma_drho**2)
 
     for _ in range(iters):
-        # predicted
-        Ri, ui = _ranges_and_u(p, beacons)  # (N,), (N,3)
-        Rr = Ri[ref_idx]
-        ur = ui[ref_idx]
+        R, u = _ranges_and_u(p, beacons)
+        Rr = R[ref_idx]
+        ur = u[ref_idx]
 
-        h = Ri[idx_oth] - Rr  # (N-1,)
+        h = R[idx_oth] - Rr
         r = drho_hat - h
 
-        # Jacobian: d(Ri-Rr)/dp = ui - ur
-        H = (ui[idx_oth] - ur)  # (N-1,3)
+        H = (u[idx_oth] - ur)  # (N-1,3)
 
-        # Weighted LS step
-        # Solve (H^T W H) dp = H^T W r
-        W = w * np.eye(len(idx_oth))
+        # Weighted normal equations
+        W = w * np.eye(len(idx_oth), dtype=float)
         A = H.T @ W @ H
         b = H.T @ W @ r
         dp = np.linalg.solve(A + 1e-9*np.eye(3), b)
-        p = p + dp
 
+        p = p + dp
         if np.linalg.norm(dp) < 1e-6:
             break
 
     return p
 
+
 def vls_pv_from_tdoa_vr(
-    drho_hat: np.ndarray,
-    vr_hat: np.ndarray,
-    beacons: np.ndarray,
+    drho_hat: np.ndarray,     # (N-1,)
+    vr_hat: np.ndarray,       # (N,)
+    beacons: np.ndarray,      # (N,3)
     ref_idx: int,
-    x0: np.ndarray,           # [p(3), v(3)]
+    x0: np.ndarray,           # (6,) [p(3), v(3)]
     sigma_drho: float,
     sigma_vr: float,
-    iters: int = 25
+    iters: int = 25,
+    full_doppler_jacobian: bool = True
 ) -> np.ndarray:
     """
     Joint WLS for x=[p,v] using:
       - TDOA (N-1): drho = ||p-bi|| - ||p-br||
-      - vr (N):    vr = u_i^T v
-    Jacobian uses practical simplification: d(vr)/dp ~ 0 (ignoring du/dp).
+      - vr (N):    vr = u_i(p)^T v
+    If full_doppler_jacobian=False => ∂vr/∂p ≈ 0 (uproszczenie).
     """
     x = x0.astype(float).copy()
     N = beacons.shape[0]
@@ -219,52 +266,58 @@ def vls_pv_from_tdoa_vr(
     for _ in range(iters):
         p = x[0:3]
         v = x[3:6]
-        Ri, ui = _ranges_and_u(p, beacons)
-        Rr = Ri[ref_idx]
-        ur = ui[ref_idx]
+
+        R, u = _ranges_and_u(p, beacons)
+        Rr = R[ref_idx]
+        ur = u[ref_idx]
 
         # residuals
-        h_drho = Ri[idx_oth] - Rr
+        h_drho = R[idx_oth] - Rr
         r_drho = drho_hat - h_drho
 
-        h_vr = ui @ v
+        h_vr = u @ v
         r_vr = vr_hat - h_vr
 
-        r = np.concatenate([r_drho, r_vr])  # ( (N-1)+N, )
+        r = np.concatenate([r_drho, r_vr])
 
         # Jacobian
         H = np.zeros((len(idx_oth) + N, 6), dtype=float)
 
-        # TDOA rows: d/drho wrt p: ui-ur; wrt v: 0
-        H[0:len(idx_oth), 0:3] = (ui[idx_oth] - ur)
+        # TDOA: d/drho wrt p = u_i - u_r ; wrt v = 0
+        H[0:len(idx_oth), 0:3] = (u[idx_oth] - ur)
         H[0:len(idx_oth), 3:6] = 0.0
 
-        # vr rows: d(vr)/dv = ui ; d(vr)/dp ~ 0
-        H[len(idx_oth):, 0:3] = 0.0
-        H[len(idx_oth):, 3:6] = ui
+        # vr: d(vr)/dv = u ; d(vr)/dp = full or 0
+        H[len(idx_oth):, 3:6] = u
+        if full_doppler_jacobian:
+            Jp = _dvr_dp_full(u, R, v)  # (N,3)
+            H[len(idx_oth):, 0:3] = Jp
+        else:
+            H[len(idx_oth):, 0:3] = 0.0
 
         # weights
         W = np.diag(
             np.concatenate([
                 np.full(len(idx_oth), w_drho),
-                np.full(N, w_vr),
+                np.full(N, w_vr)
             ])
         )
 
         A = H.T @ W @ H
         b = H.T @ W @ r
         dx = np.linalg.solve(A + 1e-9*np.eye(6), b)
-        x = x + dx
 
+        x = x + dx
         if np.linalg.norm(dx) < 1e-6:
             break
 
     return x
 
+
 def run_vls_tdoa_series(
     t: np.ndarray,
     beacons: np.ndarray,
-    drho_hats: np.ndarray,   # (K,N-1)
+    drho_hats: np.ndarray,    # (K,N-1)
     ref_idx: int,
     p_init: np.ndarray,
     sigma_drho: float
@@ -272,34 +325,68 @@ def run_vls_tdoa_series(
     K = len(t)
     p_est = np.zeros((K, 3), dtype=float)
     p_prev = p_init.astype(float).copy()
+
     for k in range(K):
         p_prev = vls_position_from_tdoa(drho_hats[k], beacons, ref_idx, p_prev, sigma_drho)
         p_est[k] = p_prev
+
     return p_est
+
 
 def run_vls_tdoa_vr_series(
     t: np.ndarray,
     beacons: np.ndarray,
-    drho_hats: np.ndarray,   # (K,N-1)
-    vr_hats: np.ndarray,     # (K,N)
+    drho_hats: np.ndarray,    # (K,N-1)
+    vr_hats: np.ndarray,      # (K,N)
     ref_idx: int,
-    x_init: np.ndarray,      # (6,)
+    x_init: np.ndarray,       # (6,)
     sigma_drho: float,
-    sigma_vr: float
+    sigma_vr: float,
+    full_doppler_jacobian: bool = True
 ) -> np.ndarray:
     K = len(t)
     xs = np.zeros((K, 6), dtype=float)
     x_prev = x_init.astype(float).copy()
+
     for k in range(K):
-        x_prev = vls_pv_from_tdoa_vr(drho_hats[k], vr_hats[k], beacons, ref_idx, x_prev, sigma_drho, sigma_vr)
+        x_prev = vls_pv_from_tdoa_vr(
+            drho_hats[k],
+            vr_hats[k],
+            beacons,
+            ref_idx,
+            x_prev,
+            sigma_drho=sigma_drho,
+            sigma_vr=sigma_vr,
+            full_doppler_jacobian=full_doppler_jacobian,
+        )
         xs[k] = x_prev
+
     return xs
 
+
 # ============================================================
-# EKF: state x=[p(3), v(3)] with:
-#   - TDOA only (N-1)
-#   - TDOA + vr (N-1 + N)
+# EKF: x=[p(3), v(3)]
+#   - update with TDOA only
+#   - update with TDOA + vr
 # ============================================================
+
+def _motion_matrices(dt: float, q_acc: float) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Constant velocity model with accel random walk.
+    Returns (F,Q).
+    """
+    F = np.eye(6, dtype=float)
+    F[0, 3] = dt
+    F[1, 4] = dt
+    F[2, 5] = dt
+
+    G = np.zeros((6, 3), dtype=float)
+    G[0:3, :] = 0.5 * dt**2 * np.eye(3)
+    G[3:6, :] = dt * np.eye(3)
+
+    Q = (q_acc**2) * (G @ G.T)
+    return F, Q
+
 
 def ekf_run_tdoa(
     t: np.ndarray,
@@ -310,33 +397,26 @@ def ekf_run_tdoa(
     sigma_drho: float,
     x0: np.ndarray,
     P0: np.ndarray,
-    q_acc: float = 0.05,
+    q_acc: float = 0.05
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    EKF with z = TDOA range-difference (meters): drho_i = ||p-bi|| - ||p-br||
+    EKF with z = drho (range-difference in meters) for i != ref:
+      z_i = ||p - b_i|| - ||p - b_r||
     """
     K = len(t)
     N = beacons.shape[0]
     idx = np.arange(N)
     idx_oth = idx[idx != ref_idx]
+    m = len(idx_oth)
 
     x = x0.astype(float).copy()
     P = P0.astype(float).copy()
+
     xs = np.zeros((K, 6), dtype=float)
     Ps = np.zeros((K, 6, 6), dtype=float)
 
-    # motion model
-    F = np.eye(6, dtype=float)
-    F[0, 3] = dt
-    F[1, 4] = dt
-    F[2, 5] = dt
-
-    G = np.zeros((6, 3), dtype=float)
-    G[0:3, :] = 0.5 * dt**2 * np.eye(3)
-    G[3:6, :] = dt * np.eye(3)
-    Q = (q_acc**2) * (G @ G.T)
-
-    Rm = (sigma_drho**2) * np.eye(len(idx_oth), dtype=float)
+    F, Q = _motion_matrices(dt, q_acc)
+    Rm = (sigma_drho**2) * np.eye(m, dtype=float)
 
     for k in range(K):
         # predict
@@ -344,17 +424,16 @@ def ekf_run_tdoa(
         P = F @ P @ F.T + Q
 
         p = x[0:3]
-        Ri, ui = _ranges_and_u(p, beacons)
-        Rr = Ri[ref_idx]
-        ur = ui[ref_idx]
+        R, u = _ranges_and_u(p, beacons)
+        Rr = R[ref_idx]
+        ur = u[ref_idx]
 
-        z_pred = Ri[idx_oth] - Rr
+        z_pred = R[idx_oth] - Rr
         z = drho_hats[k]
         y = z - z_pred
 
-        # H: d(drho)/dp = ui - ur ; d/drho wrt v = 0
-        H = np.zeros((len(idx_oth), 6), dtype=float)
-        H[:, 0:3] = (ui[idx_oth] - ur)
+        H = np.zeros((m, 6), dtype=float)
+        H[:, 0:3] = (u[idx_oth] - ur)
         H[:, 3:6] = 0.0
 
         S = H @ P @ H.T + Rm
@@ -366,6 +445,7 @@ def ekf_run_tdoa(
         Ps[k] = P
 
     return xs, Ps
+
 
 def ekf_run_tdoa_vr(
     t: np.ndarray,
@@ -379,10 +459,13 @@ def ekf_run_tdoa_vr(
     x0: np.ndarray,
     P0: np.ndarray,
     q_acc: float = 0.05,
+    full_doppler_jacobian: bool = True
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    EKF with z=[drho (N-1), vr (N)]
-    Jacobian for vr uses simplification: d(vr)/dp ~ 0, d(vr)/dv = u
+    EKF with z = [drho (N-1), vr (N)].
+    vr model: vr_i = u_i(p)^T v
+
+    If full_doppler_jacobian=False => ∂vr/∂p ≈ 0 (uproszczenie).
     """
     K = len(t)
     N = beacons.shape[0]
@@ -392,19 +475,11 @@ def ekf_run_tdoa_vr(
 
     x = x0.astype(float).copy()
     P = P0.astype(float).copy()
+
     xs = np.zeros((K, 6), dtype=float)
     Ps = np.zeros((K, 6, 6), dtype=float)
 
-    # motion model
-    F = np.eye(6, dtype=float)
-    F[0, 3] = dt
-    F[1, 4] = dt
-    F[2, 5] = dt
-
-    G = np.zeros((6, 3), dtype=float)
-    G[0:3, :] = 0.5 * dt**2 * np.eye(3)
-    G[3:6, :] = dt * np.eye(3)
-    Q = (q_acc**2) * (G @ G.T)
+    F, Q = _motion_matrices(dt, q_acc)
 
     Rm = np.diag(
         np.concatenate([
@@ -421,12 +496,12 @@ def ekf_run_tdoa_vr(
         p = x[0:3]
         v = x[3:6]
 
-        Ri, ui = _ranges_and_u(p, beacons)
-        Rr = Ri[ref_idx]
-        ur = ui[ref_idx]
+        R, u = _ranges_and_u(p, beacons)
+        Rr = R[ref_idx]
+        ur = u[ref_idx]
 
-        drho_pred = Ri[idx_oth] - Rr
-        vr_pred = ui @ v
+        drho_pred = R[idx_oth] - Rr
+        vr_pred = u @ v
 
         z_pred = np.concatenate([drho_pred, vr_pred])
         z = np.concatenate([drho_hats[k], vr_hats[k]])
@@ -435,12 +510,16 @@ def ekf_run_tdoa_vr(
         H = np.zeros((m, 6), dtype=float)
 
         # drho part
-        H[0:len(idx_oth), 0:3] = (ui[idx_oth] - ur)
+        H[0:len(idx_oth), 0:3] = (u[idx_oth] - ur)
         H[0:len(idx_oth), 3:6] = 0.0
 
         # vr part
-        H[len(idx_oth):, 0:3] = 0.0
-        H[len(idx_oth):, 3:6] = ui
+        H[len(idx_oth):, 3:6] = u
+        if full_doppler_jacobian:
+            Jp = _dvr_dp_full(u, R, v)  # (N,3)
+            H[len(idx_oth):, 0:3] = Jp
+        else:
+            H[len(idx_oth):, 0:3] = 0.0
 
         S = H @ P @ H.T + Rm
         Kk = P @ H.T @ np.linalg.inv(S)
@@ -452,12 +531,14 @@ def ekf_run_tdoa_vr(
 
     return xs, Ps
 
+
 # ============================================================
 # Metrics + runners
 # ============================================================
 
 def position_errors(p_est: np.ndarray, p_true: np.ndarray) -> np.ndarray:
     return np.linalg.norm(p_est - p_true, axis=1)
+
 
 def summarize_errors(e: np.ndarray) -> dict:
     return {
@@ -468,6 +549,7 @@ def summarize_errors(e: np.ndarray) -> dict:
         "MAX": float(np.max(e)),
     }
 
+
 def run_single_experiment(config: dict, seed: int = 1) -> dict:
     rng = np.random.default_rng(seed)
 
@@ -476,7 +558,8 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     c = float(config["acoustics"]["c"])
     sigma_t = float(config["noise"]["sigma_t"])
     sigma_vr = float(config["noise"]["sigma_vr"])
-    ref_idx = int(config["tdoa"]["ref_idx"])
+
+    ref_idx = int(config.get("tdoa", {}).get("ref_idx", 0))
 
     gross = config.get("gross", {})
     gross_enable = bool(gross.get("enable", False))
@@ -484,6 +567,9 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     gross_scale_tdoa = float(gross.get("scale_tdoa", 10.0))
     gross_p_vr = float(gross.get("p_vr", 0.0))
     gross_scale_vr = float(gross.get("scale_vr", 10.0))
+
+    dop = config.get("doppler", {})
+    full_jac = bool(dop.get("full_jacobian", True))
 
     T = float(config["trajectory"]["T"])
     dt = float(config["trajectory"]["dt"])
@@ -501,6 +587,11 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
 
     K = len(t)
     N = beacons.shape[0]
+    if N < 4:
+        # Technicznie do TDOA w 3D potrzebujesz >= 4 beaconów, a do 2D >= 3.
+        # Nie blokuję, ale ostrzegam przez meta.
+        pass
+
     drho_hats = np.zeros((K, N-1), dtype=float)
     vr_hats = np.zeros((K, N), dtype=float)
     gross_meta = []
@@ -511,17 +602,20 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
             sigma_t=sigma_t, sigma_vr=sigma_vr, rng=rng,
             ref_idx=ref_idx,
             gross_enable=gross_enable,
-            gross_p_tdoa=gross_p_tdoa, gross_scale_tdoa=gross_scale_tdoa,
-            gross_p_vr=gross_p_vr, gross_scale_vr=gross_scale_vr
+            gross_p_tdoa=gross_p_tdoa,
+            gross_scale_tdoa=gross_scale_tdoa,
+            gross_p_vr=gross_p_vr,
+            gross_scale_vr=gross_scale_vr
         )
         gross_meta.append(meta)
 
     # ---- Noise scaling for TDOA ----
+    # TOA noise sigma_t -> TDOA difference noise sigma_dt = sqrt(2)*sigma_t
     sigma_dt = np.sqrt(2.0) * sigma_t
     sigma_drho = c * sigma_dt  # [m]
 
     # ---- Initial guesses ----
-    p_init = p_true[0] + np.array([5.0, -5.0, 2.0])
+    p_init = p_true[0] + np.array([5.0, -5.0, 2.0])  # small offset
     x_init = np.zeros(6, dtype=float)
     x_init[0:3] = p_init
     x_init[3:6] = np.array([0.0, 0.0, 0.0])
@@ -529,32 +623,43 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     P0 = np.diag([25.0, 25.0, 25.0, 4.0, 4.0, 4.0]).astype(float)
 
     # ============================================================
-    # VLS (TDOA only)  -> p_vls
-    # VLS (TDOA + vr)  -> x_vls_dopp -> p, v
+    # VLS: TDOA only
+    # VLS: TDOA + vr
     # ============================================================
     p_vls = run_vls_tdoa_series(t, beacons, drho_hats, ref_idx, p_init, sigma_drho)
 
     xs_vls_dopp = run_vls_tdoa_vr_series(
-        t, beacons, drho_hats, vr_hats, ref_idx, x_init, sigma_drho, sigma_vr
+        t, beacons, drho_hats, vr_hats, ref_idx,
+        x_init=x_init,
+        sigma_drho=sigma_drho,
+        sigma_vr=sigma_vr,
+        full_doppler_jacobian=full_jac
     )
     p_vls_dopp = xs_vls_dopp[:, 0:3]
     v_vls_dopp = xs_vls_dopp[:, 3:6]
 
     # ============================================================
-    # EKF (TDOA only)  -> xs_ekf
-    # EKF (TDOA + vr)  -> xs_ekf_dopp
+    # EKF: TDOA only
+    # EKF: TDOA + vr
     # ============================================================
     xs_ekf, Ps_ekf = ekf_run_tdoa(
         t, dt, beacons, drho_hats, ref_idx,
-        sigma_drho=sigma_drho, x0=x_init, P0=P0, q_acc=q_acc
+        sigma_drho=sigma_drho,
+        x0=x_init,
+        P0=P0,
+        q_acc=q_acc
     )
     p_ekf = xs_ekf[:, 0:3]
     v_ekf = xs_ekf[:, 3:6]
 
     xs_ekf_dopp, Ps_ekf_dopp = ekf_run_tdoa_vr(
         t, dt, beacons, drho_hats, vr_hats, ref_idx,
-        sigma_drho=sigma_drho, sigma_vr=sigma_vr,
-        x0=x_init, P0=P0, q_acc=q_acc
+        sigma_drho=sigma_drho,
+        sigma_vr=sigma_vr,
+        x0=x_init,
+        P0=P0,
+        q_acc=q_acc,
+        full_doppler_jacobian=full_jac
     )
     p_ekf_dopp = xs_ekf_dopp[:, 0:3]
     v_ekf_dopp = xs_ekf_dopp[:, 3:6]
@@ -594,22 +699,27 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
         "e_ekf": e_ekf,
         "e_ekf_dopp": e_ekf_dopp,
 
+        # summaries
         "summary_vls": summarize_errors(e_vls),
         "summary_vls_dopp": summarize_errors(e_vls_dopp),
         "summary_ekf": summarize_errors(e_ekf),
         "summary_ekf_dopp": summarize_errors(e_ekf_dopp),
 
-        "config": config,
+        # diagnostics
         "noise_diag": {
             "sigma_dt": float(sigma_dt),
             "sigma_drho": float(sigma_drho),
+            "full_doppler_jacobian": bool(full_jac),
             "gross_enable": gross_enable,
-            "gross_p_tdoa": gross_p_tdoa,
-            "gross_scale_tdoa": gross_scale_tdoa,
-            "gross_p_vr": gross_p_vr,
-            "gross_scale_vr": gross_scale_vr,
-        }
+            "gross_p_tdoa": float(gross_p_tdoa),
+            "gross_scale_tdoa": float(gross_scale_tdoa),
+            "gross_p_vr": float(gross_p_vr),
+            "gross_scale_vr": float(gross_scale_vr),
+        },
+
+        "config": config
     }
+
 
 def run_monte_carlo(config: dict, M: int, seed0: int = 1) -> dict:
     rows = []
