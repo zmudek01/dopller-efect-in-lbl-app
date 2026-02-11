@@ -84,11 +84,30 @@ def metric_cards(summary: dict):
 def plot_xy(p_true, p_est, beacons_xy, title, label_est):
     fig = _fig(6.4, 5.0)
     ax = fig.add_subplot(111)
-    ax.plot(p_true[:, 0], p_true[:, 1], label="Trajektoria rzeczywista", linestyle="--", linewidth=2)
-    ax.plot(p_est[:, 0], p_est[:, 1], label=label_est, linewidth=2)
-    ax.scatter(beacons_xy[:, 0], beacons_xy[:, 1], marker="^", s=80, label="Beacony")
-    ax.scatter(p_true[0, 0], p_true[0, 1], marker="o", s=70, label="Start")
-    ax.scatter(p_true[-1, 0], p_true[-1, 1], marker="s", s=70, label="Koniec")
+
+    # estymata
+    ax.plot(
+        p_est[:, 0], p_est[:, 1],
+        label=label_est,
+        linewidth=2,
+        alpha=0.9,
+        zorder=2
+    )
+
+    # trajektoria rzeczywista (na wierzchu)
+    ax.plot(
+        p_true[:, 0], p_true[:, 1],
+        label="Pozycja rzeczywista (symulacja)",
+        linestyle="--",
+        linewidth=3,
+        zorder=3
+    )
+
+    # beacony + start/koniec
+    ax.scatter(beacons_xy[:, 0], beacons_xy[:, 1], marker="^", s=80, label="Beacony", zorder=4)
+    ax.scatter(p_true[0, 0], p_true[0, 1], marker="o", s=70, label="Start", zorder=5)
+    ax.scatter(p_true[-1, 0], p_true[-1, 1], marker="s", s=70, label="Koniec", zorder=5)
+
     ax.set_title(title)
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
@@ -96,6 +115,7 @@ def plot_xy(p_true, p_est, beacons_xy, title, label_est):
     _set_equal(ax)
     ax.legend(loc="best")
     st.pyplot(fig, clear_figure=True)
+
 
 def plot_error_t(t, e, title, label):
     fig = _fig(6.4, 5.0)
