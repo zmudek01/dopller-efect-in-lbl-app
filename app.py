@@ -25,6 +25,29 @@ def _set_equal(ax):
 
 def _fig(w=7.2, h=4.8):
     return plt.figure(figsize=(w, h), dpi=120)
+    
+def legend_outside_right(fig, ax, ncol: int = 1, pad: float = 0.02, shrink: float = 0.78):
+    """
+    Legenda na zewnątrz po prawej stronie.
+    - shrink: ile miejsca zostawić na wykres (0.78 = 78% szerokości figury na osie, reszta na legendę)
+    - pad: mały odstęp między osią a legendą
+    """
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+
+    # zmniejsz obszar osi, żeby zrobić miejsce na legendę
+    fig.subplots_adjust(right=shrink)
+
+    # legenda poza osią (po prawej)
+    ax.legend(
+        handles, labels,
+        loc="center left",
+        bbox_to_anchor=(1.0 + pad, 0.5),
+        ncol=ncol,
+        frameon=True
+    )
+
 
 def legend_outside(fig, ax, ncol: int = 1):
     """
