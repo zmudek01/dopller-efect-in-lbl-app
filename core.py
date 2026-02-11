@@ -3,31 +3,26 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# ===========================================================
-# Helpers: geometry
+# ============================================================
+# Geometry helpers
 # ============================================================
 
-def _ranges_and_u(p: np.ndarray, beacons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _ranges_u_3d(p3: np.ndarray, beacons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    p: (3,)
+    p3: (3,)
     beacons: (N,3)
     Returns:
-      R: (N,)      ranges
-      u: (N,3)     unit vectors from beacon -> receiver (p - b)/||p-b||
+      R: (N,)
+      u: (N,3)  u_i = (p - b_i)/||p-b_i||
     """
-    diff = p[None, :] - beacons
+    diff = p3[None, :] - beacons
     R = np.linalg.norm(diff, axis=1)
     R = np.maximum(R, 1e-9)
     u = diff / R[:, None]
     return R, u
 
 
-# ============================================================
-# Scenario helpers
-# ============================================================
-
 def make_beacons_preset(preset: str, radius: float, z: float = 0.0) -> np.ndarray:
-    """Returns beacons positions (N,3) for preset shapes centered at (0,0,z)."""
     preset = preset.lower()
     if preset == "trójkąt":
         angles = np.deg2rad([90, 210, 330])
@@ -47,12 +42,6 @@ def make_beacons_preset(preset: str, radius: float, z: float = 0.0) -> np.ndarra
 def make_trajectory(kind: str, T: float, dt: float,
                     speed: float, heading_deg: float,
                     start: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Returns:
-      t: (K,)
-      p: (K,3)
-      v: (K,3)
-    """
     kind = kind.lower()
     t = np.arange(0.0, T + 1e-12, dt)
     K = len(t)
@@ -72,33 +61,33 @@ def make_trajectory(kind: str, T: float, dt: float,
 
     elif kind == "racetrack":
         L = 0.6 * speed * T
-        R = max(10.0, 0.15 * L)
+        Rr = max(10.0, 0.15 * L)
 
         s = speed * t
-        per = 2 * (L + np.pi * R)
+        per = 2 * (L + np.pi * Rr)
         s_mod = np.mod(s, per)
 
         for k in range(K):
             sk = s_mod[k]
             if sk < L:
-                p[k] = np.array([start[0] - L/2 + sk, start[1] - R, z])
+                p[k] = np.array([start[0] - L/2 + sk, start[1] - Rr, z])
                 v[k] = np.array([speed, 0.0, 0.0])
-            elif sk < L + np.pi * R:
-                phi = (sk - L) / R
+            elif sk < L + np.pi * Rr:
+                phi = (sk - L) / Rr
                 cx, cy = start[0] + L/2, start[1]
-                p[k] = np.array([cx + R*np.cos(-np.pi/2 + phi),
-                                 cy + R*np.sin(-np.pi/2 + phi), z])
+                p[k] = np.array([cx + Rr*np.cos(-np.pi/2 + phi),
+                                 cy + Rr*np.sin(-np.pi/2 + phi), z])
                 v[k] = speed * np.array([-np.sin(-np.pi/2 + phi),
                                          np.cos(-np.pi/2 + phi), 0.0])
-            elif sk < 2*L + np.pi * R:
-                s2 = sk - (L + np.pi*R)
-                p[k] = np.array([start[0] + L/2 - s2, start[1] + R, z])
+            elif sk < 2*L + np.pi * Rr:
+                s2 = sk - (L + np.pi*Rr)
+                p[k] = np.array([start[0] + L/2 - s2, start[1] + Rr, z])
                 v[k] = np.array([-speed, 0.0, 0.0])
             else:
-                phi = (sk - (2*L + np.pi*R)) / R
+                phi = (sk - (2*L + np.pi*Rr)) / Rr
                 cx, cy = start[0] - L/2, start[1]
-                p[k] = np.array([cx + R*np.cos(np.pi/2 + phi),
-                                 cy + R*np.sin(np.pi/2 + phi), z])
+                p[k] = np.array([cx + Rr*np.cos(np.pi/2 + phi),
+                                 cy + Rr*np.sin(np.pi/2 + phi), z])
                 v[k] = speed * np.array([-np.sin(np.pi/2 + phi),
                                          np.cos(np.pi/2 + phi), 0.0])
     else:
@@ -108,11 +97,11 @@ def make_trajectory(kind: str, T: float, dt: float,
 
 
 # ============================================================
-# Measurement model: TDOA (meters) + Doppler as vr (m/s) + outliers
+# Measurements: TDOA (meters) + Doppler as vr (m/s) + gross errors
 # ============================================================
 
 def simulate_measurements_tdoa(
-    p: np.ndarray, v: np.ndarray,
+    p3: np.ndarray, v3: np.ndarray,
     beacons: np.ndarray,
     c: float,
     sigma_tdoa: float,
@@ -125,18 +114,17 @@ def simulate_measurements_tdoa(
     gross_vr_mps: float = 1.0
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Returns:
-      dR_hat: (N-1,)  where dR_i = (R_i - R_ref) + noise , in meters
-      vr_hat: (N,)    radial velocity observation per beacon
+    dR_hat: (N-1,)  dR_i = (R_i - R_ref) + noise, in meters
+    vr_hat: (N,)    vr_i = u_i^T v + noise
     """
-    R_true, u = _ranges_and_u(p, beacons)      # (N,), (N,3)
-    vr_true = (u @ v)                          # (N,)
+    R_true, u = _ranges_u_3d(p3, beacons)
+    vr_true = (u @ v3)
 
     N = beacons.shape[0]
     mask = np.ones(N, dtype=bool)
     mask[ref_idx] = False
 
-    dR_true = (R_true - R_true[ref_idx])[mask]  # (N-1,)
+    dR_true = (R_true - R_true[ref_idx])[mask]
     dR_hat = dR_true + c * rng.normal(0.0, sigma_tdoa, size=dR_true.shape)
 
     vr_hat = vr_true + rng.normal(0.0, sigma_vr, size=vr_true.shape)
@@ -154,41 +142,54 @@ def simulate_measurements_tdoa(
 
 
 # ============================================================
-# VLS 1: WLS position from TDOA (per epoch)
+# VLS (2D): TDOA only, per epoch (stable: LM + step limit)
 # ============================================================
 
-def wls_position_from_tdoa(
+def wls_xy_from_tdoa(
     dR_hat: np.ndarray,
     beacons: np.ndarray,
-    p0: np.ndarray,
+    xy0: np.ndarray,
+    z_known: float,
     ref_idx: int = 0,
-    iters: int = 15
+    iters: int = 15,
+    step_max: float = 20.0,
+    lm_lambda: float = 1e-2
 ) -> np.ndarray:
     """
-    Solve p from dR measurements:
+    Estimate xy using TDOA only:
       dR_i = R_i - R_ref
-    Gauss-Newton:
-      minimize sum (dR_hat_i - (R_i - R_ref))^2
+    Use LM damping and step limit for stability.
     """
-    p = p0.astype(float).copy()
+    xy = xy0.astype(float).copy()
     N = beacons.shape[0]
     mask = np.ones(N, dtype=bool)
     mask[ref_idx] = False
 
     for _ in range(iters):
-        R, u = _ranges_and_u(p, beacons)
-        dR_pred = (R - R[ref_idx])[mask]     # (N-1,)
-        r = dR_hat - dR_pred                 # (N-1,)
+        p3 = np.array([xy[0], xy[1], z_known], dtype=float)
+        R, u = _ranges_u_3d(p3, beacons)
 
-        # Jacobian: d(R_i - R_ref)/dp = u_i - u_ref
-        H = (u[mask] - u[ref_idx])           # (N-1,3)
+        dR_pred = (R - R[ref_idx])[mask]
+        r = dR_hat - dR_pred  # (N-1,)
 
-        dp, *_ = np.linalg.lstsq(H, r, rcond=None)
-        p = p + dp
-        if np.linalg.norm(dp) < 1e-6:
+        # Jacobian wrt xy: (u_i - u_ref) projected to x,y
+        Hxy = (u[mask] - u[ref_idx])[:, 0:2]  # (N-1, 2)
+
+        # LM: (H^T H + λI) dx = H^T r
+        A = Hxy.T @ Hxy + lm_lambda * np.eye(2)
+        b = Hxy.T @ r
+        dxy = np.linalg.solve(A, b)
+
+        # step limit
+        n = float(np.linalg.norm(dxy))
+        if n > step_max:
+            dxy *= (step_max / n)
+
+        xy = xy + dxy
+        if np.linalg.norm(dxy) < 1e-6:
             break
 
-    return p
+    return xy
 
 
 def run_vls_tdoa_series(
@@ -196,38 +197,47 @@ def run_vls_tdoa_series(
     beacons: np.ndarray,
     dR_hats: np.ndarray,
     p_init: np.ndarray,
+    z_known: float,
     ref_idx: int = 0
 ) -> np.ndarray:
-    """Per-epoch VLS from TDOA only."""
     K = len(t)
     p_est = np.zeros((K, 3), dtype=float)
-    p_prev = p_init.astype(float).copy()
+
+    xy_prev = p_init[0:2].astype(float).copy()
     for k in range(K):
-        p_prev = wls_position_from_tdoa(dR_hats[k], beacons, p_prev, ref_idx=ref_idx)
-        p_est[k] = p_prev
+        xy_prev = wls_xy_from_tdoa(
+            dR_hats[k], beacons, xy_prev, z_known=z_known, ref_idx=ref_idx
+        )
+        p_est[k] = np.array([xy_prev[0], xy_prev[1], z_known], dtype=float)
+
     return p_est
 
 
 # ============================================================
-# VLS 2: Weighted LS on state [p,v] from TDOA + vr (per epoch)
+# VLS (2D): TDOA + vr, per epoch (state [x,y,vx,vy], stable)
 # ============================================================
 
-def wls_pv_from_tdoa_vr_weighted(
+def wls_xv_from_tdoa_vr(
     dR_hat: np.ndarray,
     vr_hat: np.ndarray,
     beacons: np.ndarray,
-    x0: np.ndarray,
+    x0: np.ndarray,          # [x,y,vx,vy]
+    z_known: float,
     ref_idx: int = 0,
     iters: int = 15,
     sigma_dR: float = 0.15,
-    sigma_vr: float = 0.05
+    sigma_vr: float = 0.05,
+    step_pos_max: float = 20.0,
+    step_vel_max: float = 2.0,
+    lm_lambda: float = 1e-2
 ) -> np.ndarray:
     """
-    Gauss-Newton on x=[p(3), v(3)] with weights:
-      sum ((dR_hat - dR_pred)/sigma_dR)^2 + sum((vr_hat - vr_pred)/sigma_vr)^2
+    Weighted LS on x=[x,y,vx,vy] using:
+      - TDOA (N-1)
+      - vr   (N)
 
-    vr_pred = u(p)^T v
-    Includes d(vr)/dp term: (I - uu^T) v / R
+    Includes d(vr)/d(xy) term (projected to xy).
+    Uses LM + step limits.
     """
     x = x0.astype(float).copy()
     N = beacons.shape[0]
@@ -238,36 +248,57 @@ def wls_pv_from_tdoa_vr_weighted(
     inv_svr = 1.0 / float(max(sigma_vr, 1e-12))
 
     for _ in range(iters):
-        p = x[0:3]
-        v = x[3:6]
+        xy = x[0:2]
+        vxy = x[2:4]
+        p3 = np.array([xy[0], xy[1], z_known], dtype=float)
+        v3 = np.array([vxy[0], vxy[1], 0.0], dtype=float)
 
-        R, u = _ranges_and_u(p, beacons)
+        R, u = _ranges_u_3d(p3, beacons)
 
-        dR_pred = (R - R[ref_idx])[mask]    # (N-1,)
-        vr_pred = (u @ v)                   # (N,)
+        dR_pred = (R - R[ref_idx])[mask]      # (N-1,)
+        vr_pred = (u @ v3)                    # (N,)
 
         r_dR = (dR_hat - dR_pred) * inv_sdR
         r_vr = (vr_hat - vr_pred) * inv_svr
-        r = np.concatenate([r_dR, r_vr])    # (2N-1,)
+        r = np.concatenate([r_dR, r_vr])      # (2N-1,)
 
-        H = np.zeros(((N - 1) + N, 6), dtype=float)
+        H = np.zeros(((N - 1) + N, 4), dtype=float)
 
-        # d(dR)/dp = u_i - u_ref
-        H[0:(N-1), 0:3] = (u[mask] - u[ref_idx]) * inv_sdR
+        # ---- TDOA: d(dR)/d(xy) = (u_i - u_ref)_{xy}
+        H[0:(N-1), 0:2] = (u[mask] - u[ref_idx])[:, 0:2] * inv_sdR
 
-        # d(vr)/dv = u
-        H[(N-1):, 3:6] = u * inv_svr
+        # ---- vr: d(vr)/d(vxy) = u_{xy}
+        H[(N-1):, 2:4] = u[:, 0:2] * inv_svr
 
-        # d(vr)/dp = v_perp / R
+        # ---- vr: d(vr)/d(xy) = ((I - u u^T) v)/R projected to xy
         for i in range(N):
             ui = u[i]
             Ri = R[i]
-            v_perp = v - ui * float(ui @ v)
-            H[(N-1) + i, 0:3] = (v_perp / Ri) * inv_svr
+            v_perp = v3 - ui * float(ui @ v3)             # (I - u u^T) v
+            dvr_dp = (v_perp / Ri)                        # (3,)
+            H[(N-1) + i, 0:2] = dvr_dp[0:2] * inv_svr
 
-        dx, *_ = np.linalg.lstsq(H, r, rcond=None)
-        x = x + dx
-        if np.linalg.norm(dx) < 1e-6:
+        # LM solve: (H^T H + λI) dx = H^T r
+        A = H.T @ H + lm_lambda * np.eye(4)
+        b = H.T @ r
+        dx = np.linalg.solve(A, b)
+
+        # step limits
+        dpos = dx[0:2]
+        dvel = dx[2:4]
+
+        npn = float(np.linalg.norm(dpos))
+        if npn > step_pos_max:
+            dpos *= (step_pos_max / npn)
+
+        nvn = float(np.linalg.norm(dvel))
+        if nvn > step_vel_max:
+            dvel *= (step_vel_max / nvn)
+
+        dx_limited = np.concatenate([dpos, dvel])
+        x = x + dx_limited
+
+        if np.linalg.norm(dx_limited) < 1e-6:
             break
 
     return x
@@ -278,31 +309,39 @@ def run_vls_tdoa_vr_series(
     beacons: np.ndarray,
     dR_hats: np.ndarray,
     vr_hats: np.ndarray,
-    x_init: np.ndarray,
+    x_init: np.ndarray,       # [x,y,vx,vy]
+    z_known: float,
     ref_idx: int = 0,
     sigma_dR: float = 0.15,
     sigma_vr: float = 0.05
-) -> np.ndarray:
-    """Per-epoch weighted VLS on [p,v] using TDOA + vr."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Returns:
+      p_est: (K,3)
+      v_est: (K,3)
+    """
     K = len(t)
-    xs = np.zeros((K, 6), dtype=float)
+    p_est = np.zeros((K, 3), dtype=float)
+    v_est = np.zeros((K, 3), dtype=float)
+
     x_prev = x_init.astype(float).copy()
-
     for k in range(K):
-        x_prev = wls_pv_from_tdoa_vr_weighted(
-            dR_hats[k], vr_hats[k], beacons, x_prev,
-            ref_idx=ref_idx, sigma_dR=sigma_dR, sigma_vr=sigma_vr
+        x_prev = wls_xv_from_tdoa_vr(
+            dR_hats[k], vr_hats[k], beacons,
+            x_prev, z_known=z_known, ref_idx=ref_idx,
+            sigma_dR=sigma_dR, sigma_vr=sigma_vr
         )
-        xs[k] = x_prev
+        p_est[k] = np.array([x_prev[0], x_prev[1], z_known], dtype=float)
+        v_est[k] = np.array([x_prev[2], x_prev[3], 0.0], dtype=float)
 
-    return xs
+    return p_est, v_est
 
 
 # ============================================================
-# EKF: state [p,v] with TDOA, optional vr, robust update
+# EKF (2D): state [x,y,vx,vy], measurements TDOA + optional vr
 # ============================================================
 
-def ekf_run_tdoa(
+def ekf_run_tdoa_2d(
     t: np.ndarray,
     dt: float,
     beacons: np.ndarray,
@@ -310,24 +349,24 @@ def ekf_run_tdoa(
     vr_hats: np.ndarray,
     sigma_dR: float,
     sigma_vr: float,
-    x0: np.ndarray,
-    P0: np.ndarray,
+    x0: np.ndarray,      # (4,)
+    P0: np.ndarray,      # (4,4)
+    z_known: float,
     q_acc: float = 0.05,
     ref_idx: int = 0,
     use_doppler: bool = True,
     robust_k: float = 3.0
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    EKF with CV model.
-    Measurements:
-      - always TDOA: dR (N-1)
-      - optionally Doppler: vr (N)
+    EKF in 2D with CV model.
+    State: [x, y, vx, vy]
 
-    robust_k: if |innovation| > robust_k*sigma -> inflate measurement variance.
+    Measurements:
+      TDOA: dR (N-1)
+      optional vr: (N,)
     """
     K = len(t)
     N = beacons.shape[0]
-
     mask = np.ones(N, dtype=bool)
     mask[ref_idx] = False
 
@@ -336,19 +375,18 @@ def ekf_run_tdoa(
     x = x0.astype(float).copy()
     P = P0.astype(float).copy()
 
-    xs = np.zeros((K, 6), dtype=float)
-    Ps = np.zeros((K, 6, 6), dtype=float)
+    xs = np.zeros((K, 4), dtype=float)
+    Ps = np.zeros((K, 4, 4), dtype=float)
 
-    # state transition (CV)
-    F = np.eye(6, dtype=float)
-    F[0, 3] = dt
-    F[1, 4] = dt
-    F[2, 5] = dt
+    # F (CV)
+    F = np.eye(4, dtype=float)
+    F[0, 2] = dt
+    F[1, 3] = dt
 
-    # process noise from accel RW
-    G = np.zeros((6, 3), dtype=float)
-    G[0:3, :] = 0.5 * dt**2 * np.eye(3)
-    G[3:6, :] = dt * np.eye(3)
+    # Q from accel RW in 2D
+    G = np.zeros((4, 2), dtype=float)
+    G[0:2, :] = 0.5 * dt**2 * np.eye(2)
+    G[2:4, :] = dt * np.eye(2)
     Q = (q_acc**2) * (G @ G.T)
 
     base_var = np.concatenate([
@@ -362,13 +400,15 @@ def ekf_run_tdoa(
         x = F @ x
         P = F @ P @ F.T + Q
 
-        p = x[0:3]
-        v = x[3:6]
+        xy = x[0:2]
+        vxy = x[2:4]
+        p3 = np.array([xy[0], xy[1], z_known], dtype=float)
+        v3 = np.array([vxy[0], vxy[1], 0.0], dtype=float)
 
-        R, u = _ranges_and_u(p, beacons)
+        R, u = _ranges_u_3d(p3, beacons)
 
-        dR_pred = (R - R[ref_idx])[mask]  # (N-1,)
-        vr_pred = (u @ v)                 # (N,)
+        dR_pred = (R - R[ref_idx])[mask]
+        vr_pred = (u @ v3)
 
         if use_doppler:
             z = np.concatenate([dR_hats[k], vr_hats[k]])
@@ -379,24 +419,25 @@ def ekf_run_tdoa(
 
         y = z - z_pred  # innovation
 
-        # Jacobian
-        H = np.zeros((M, 6), dtype=float)
+        # H
+        H = np.zeros((M, 4), dtype=float)
 
-        # d(dR)/dp = u_i - u_ref
-        H[0:(N-1), 0:3] = (u[mask] - u[ref_idx])
+        # TDOA: d(dR)/d(xy) = (u_i - u_ref)_{xy}
+        H[0:(N-1), 0:2] = (u[mask] - u[ref_idx])[:, 0:2]
 
         if use_doppler:
-            # d(vr)/dv = u
-            H[(N-1):, 3:6] = u
+            # d(vr)/d(vxy) = u_{xy}
+            H[(N-1):, 2:4] = u[:, 0:2]
 
-            # d(vr)/dp = v_perp / R
+            # d(vr)/d(xy) = ((I - u u^T) v)/R projected to xy
             for i in range(N):
                 ui = u[i]
                 Ri = R[i]
-                v_perp = v - ui * float(ui @ v)
-                H[(N-1) + i, 0:3] = (v_perp / Ri)
+                v_perp = v3 - ui * float(ui @ v3)
+                dvr_dp = v_perp / Ri
+                H[(N-1) + i, 0:2] = dvr_dp[0:2]
 
-        # robust scaling -> inflate variance for large innovations
+        # robust variance inflation
         scale = np.ones_like(base_sigma)
         big = np.abs(y) > (robust_k * base_sigma)
         if np.any(big):
@@ -408,7 +449,7 @@ def ekf_run_tdoa(
         Kk = P @ H.T @ np.linalg.inv(S)
 
         x = x + Kk @ y
-        P = (np.eye(6) - Kk @ H) @ P
+        P = (np.eye(4) - Kk @ H) @ P
 
         xs[k] = x
         Ps[k] = P
@@ -444,14 +485,14 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     beacons = np.array(config["beacons"], dtype=float)
     c = float(config["acoustics"]["c"])
 
-    # TDOA + Doppler noises
+    # noises
     sigma_tdoa = float(config["noise"]["sigma_tdoa"])
     sigma_vr = float(config["noise"]["sigma_vr"])
 
-    # ref for TDOA
+    # internal reference index (can be hidden from UI)
     ref_idx = int(config.get("tdoa", {}).get("ref_idx", 0))
 
-    # outliers
+    # gross errors
     gross = config.get("gross", {})
     enabled_gross = bool(gross.get("enabled", False))
     p_gross = float(gross.get("p_gross", 0.0))
@@ -464,7 +505,7 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     speed = float(config["trajectory"]["speed"])
     heading_deg = float(config["trajectory"]["heading_deg"])
     start_xy = np.array(config["trajectory"]["start_xy"], dtype=float)
-    z = float(config["trajectory"]["z"])
+    z = float(config["trajectory"]["z"])  # known depth
     start = np.array([start_xy[0], start_xy[1], z], dtype=float)
     traj_kind = config["trajectory"]["kind"]
 
@@ -472,6 +513,8 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
 
     K = len(t)
     N = beacons.shape[0]
+    if N < 4:
+        raise ValueError("Dla TDOA w 2D zalecane jest N>=4 (np. kwadrat/pieciokat).")
 
     dR_hats = np.zeros((K, N - 1), dtype=float)
     vr_hats = np.zeros((K, N), dtype=float)
@@ -491,78 +534,81 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
             gross_vr_mps=gross_vr_mps
         )
 
-    # initial guesses
-    p_init = p_true[0] + np.array([5.0, -5.0, 2.0])
-    x_init = np.zeros(6, dtype=float)
-    x_init[0:3] = p_init
-    x_init[3:6] = np.array([0.0, 0.0, 0.0])
+    sigma_dR = c * sigma_tdoa  # meters
 
-    sigma_dR = c * sigma_tdoa
+    # initial guesses (keep z fixed!)
+    p_init = p_true[0].copy()
+    p_init[0:2] += np.array([5.0, -5.0], dtype=float)
+    p_init[2] = z
+
+    x_init_vls = np.array([p_init[0], p_init[1], 0.0, 0.0], dtype=float)  # [x,y,vx,vy]
 
     # ---------- VLS ----------
-    p_vls_noD = run_vls_tdoa_series(t, beacons, dR_hats, p_init, ref_idx=ref_idx)
+    p_vls_noD = run_vls_tdoa_series(
+        t, beacons, dR_hats, p_init, z_known=z, ref_idx=ref_idx
+    )
 
-    xs_vls_D = run_vls_tdoa_vr_series(
+    p_vls_D, v_vls_D = run_vls_tdoa_vr_series(
         t, beacons,
         dR_hats=dR_hats,
         vr_hats=vr_hats,
-        x_init=x_init,
+        x_init=x_init_vls,
+        z_known=z,
         ref_idx=ref_idx,
         sigma_dR=sigma_dR,
         sigma_vr=sigma_vr
     )
-    p_vls_D = xs_vls_D[:, 0:3]
-    v_vls_D = xs_vls_D[:, 3:6]
 
     # ---------- EKF ----------
     q_acc = float(config.get("filter", {}).get("q_acc", 0.05))
     robust_k = float(config.get("filter", {}).get("robust_k", 3.0))
 
-    P0 = np.diag([25.0, 25.0, 25.0, 4.0, 4.0, 4.0]).astype(float)
+    x0 = x_init_vls.copy()
+    P0 = np.diag([25.0, 25.0, 4.0, 4.0]).astype(float)
 
-    xs_ekf_noD, _ = ekf_run_tdoa(
+    xs_ekf_noD, _ = ekf_run_tdoa_2d(
         t, dt, beacons,
         dR_hats=dR_hats,
         vr_hats=vr_hats,
         sigma_dR=sigma_dR,
         sigma_vr=sigma_vr,
-        x0=x_init,
-        P0=P0,
+        x0=x0, P0=P0,
+        z_known=z,
         q_acc=q_acc,
         ref_idx=ref_idx,
         use_doppler=False,
         robust_k=robust_k
     )
-    p_ekf_noD = xs_ekf_noD[:, 0:3]
-
-    xs_ekf_D, _ = ekf_run_tdoa(
+    xs_ekf_D, _ = ekf_run_tdoa_2d(
         t, dt, beacons,
         dR_hats=dR_hats,
         vr_hats=vr_hats,
         sigma_dR=sigma_dR,
         sigma_vr=sigma_vr,
-        x0=x_init,
-        P0=P0,
+        x0=x0, P0=P0,
+        z_known=z,
         q_acc=q_acc,
         ref_idx=ref_idx,
         use_doppler=True,
         robust_k=robust_k
     )
-    p_ekf_D = xs_ekf_D[:, 0:3]
-    v_ekf_D = xs_ekf_D[:, 3:6]
+
+    p_ekf_noD = np.column_stack([xs_ekf_noD[:, 0], xs_ekf_noD[:, 1], np.full(K, z)])
+    p_ekf_D   = np.column_stack([xs_ekf_D[:, 0],   xs_ekf_D[:, 1],   np.full(K, z)])
+
+    v_ekf_D = np.column_stack([xs_ekf_D[:, 2], xs_ekf_D[:, 3], np.zeros(K)])
 
     # ---------- errors ----------
     e_vls_noD = position_errors(p_vls_noD, p_true)
-    e_vls_D = position_errors(p_vls_D, p_true)
+    e_vls_D   = position_errors(p_vls_D, p_true)
     e_ekf_noD = position_errors(p_ekf_noD, p_true)
-    e_ekf_D = position_errors(p_ekf_D, p_true)
+    e_ekf_D   = position_errors(p_ekf_D, p_true)
 
     return {
         "t": t,
         "beacons": beacons,
         "p_true": p_true,
         "v_true": v_true,
-
         "dR_hats": dR_hats,
         "vr_hats": vr_hats,
 
