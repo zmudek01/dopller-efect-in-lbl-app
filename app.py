@@ -524,7 +524,7 @@ with tabs[7]:
 
         "ekf0_x": out["p_ekf_noD"][:, 0],
         "ekf0_y": out["p_ekf_noD"][:, 1],
-        "ekf0_z": out["p_ekf_noD"][:, 2,
+        "ekf0_z": out["p_ekf_noD"][:, 2],
 
         "ekfD_x": out["p_ekf_D"][:, 0],
         "ekfD_y": out["p_ekf_D"][:, 1],
@@ -548,3 +548,4 @@ with tabs[7]:
         file_name="experiment_bundle.zip",
         mime="application/zip",
     )
+
