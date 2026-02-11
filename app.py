@@ -49,19 +49,7 @@ def legend_outside_right(fig, ax, ncol: int = 1, pad: float = 0.02, shrink: floa
     )
 
 
-def legend_outside(fig, ax, ncol: int = 1):
-    """
-    Legenda poza wykresem (po prawej) – wersja pewna dla Streamlit.
-    """
-    ax.legend(
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        frameon=True,
-        ncol=ncol
-    )
 
-    # To jest KLUCZOWE
-    st.pyplot(fig, clear_figure=True, bbox_inches="tight")
 
 
 def config_table(config: dict) -> pd.DataFrame:
