@@ -12,7 +12,6 @@ from core import make_beacons_preset, run_single_experiment, run_monte_carlo
 
 st.set_page_config(page_title="LBL (TDOA) + Doppler – środowisko testowe", layout="wide")
 
-
 # ============================================================
 # Helpers
 # ============================================================
@@ -25,21 +24,18 @@ def _set_equal(ax):
 
 def _fig(w=7.2, h=4.8):
     return plt.figure(figsize=(w, h), dpi=120)
-    
+
 def legend_outside_right(fig, ax, ncol: int = 1, pad: float = 0.02, shrink: float = 0.78):
     """
     Legenda na zewnątrz po prawej stronie.
-    - shrink: ile miejsca zostawić na wykres (0.78 = 78% szerokości figury na osie, reszta na legendę)
-    - pad: mały odstęp między osią a legendą
+    - shrink: ile miejsca zostawić na osie (np. 0.78 => 22% szerokości figury na legendę)
+    - pad: odstęp między osią a legendą
     """
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
 
-    # zmniejsz obszar osi, żeby zrobić miejsce na legendę
     fig.subplots_adjust(right=shrink)
-
-    # legenda poza osią (po prawej)
     ax.legend(
         handles, labels,
         loc="center left",
@@ -47,10 +43,6 @@ def legend_outside_right(fig, ax, ncol: int = 1, pad: float = 0.02, shrink: floa
         ncol=ncol,
         frameon=True
     )
-
-
-
-
 
 def config_table(config: dict) -> pd.DataFrame:
     rows = []
@@ -81,14 +73,13 @@ def config_table(config: dict) -> pd.DataFrame:
 
     return pd.DataFrame(rows, columns=["Parametr", "Wartość", "Jednostka"])
 
-
 def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
             title: str, label_est: str):
     bxy = np.asarray(beacons, dtype=float)[:, 0:2]
     txy = np.asarray(p_true, dtype=float)[:, 0:2]
     exy = np.asarray(p_est, dtype=float)[:, 0:2]
 
-    fig = _fig(7.6, 5.4)  # trochę szersza, żeby legenda miała miejsce
+    fig = _fig(7.6, 5.4)
     ax = fig.add_subplot(111)
 
     ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony", zorder=6)
@@ -119,7 +110,6 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
     legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
     st.pyplot(fig, clear_figure=True)
 
-
 def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
     fig = _fig(7.6, 5.0)
     ax = fig.add_subplot(111)
@@ -132,7 +122,6 @@ def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
 
     legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
     st.pyplot(fig, clear_figure=True)
-
 
 def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, vr_pred: np.ndarray | None,
                        title: str, max_beacons: int = 5):
@@ -153,7 +142,6 @@ def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, v
     ax.set_ylabel("v_r [m/s]")
     _grid(ax)
 
-    # dużo serii -> więcej miejsca na legendę
     legend_outside_right(fig, ax, ncol=2, shrink=0.70, pad=0.02)
     st.pyplot(fig, clear_figure=True)
 
@@ -164,7 +152,6 @@ def show_metrics(summary: dict):
     c3.metric("P95 [m]",  f"{summary['P95']:.3f}")
     c4.metric("MAE [m]",  f"{summary['MAE']:.3f}")
     c5.metric("MAX [m]",  f"{summary['MAX']:.3f}")
-
 
 # ============================================================
 # UI
@@ -259,7 +246,6 @@ tabs = st.tabs([
     "Eksport",
 ])
 
-
 if "out" not in st.session_state:
     st.session_state["out"] = None
 
@@ -273,7 +259,6 @@ def require_out():
         st.warning("Kliknij **Uruchom** w panelu bocznym.")
         st.stop()
 
-
 # ============================================================
 # Tab: Geometry
 # ============================================================
@@ -283,7 +268,7 @@ with tabs[0]:
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        fig = _fig(6.8, 5.4)
+        fig = _fig(7.6, 5.4)
         ax = fig.add_subplot(111)
         bxy = beacons[:, 0:2]
         ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony")
@@ -294,9 +279,7 @@ with tabs[0]:
         ax.set_ylabel("y [m]")
         _grid(ax); _set_equal(ax)
         legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
-
-
+        st.pyplot(fig, clear_figure=True)
 
         st.write("Tabela beaconów [m]")
         st.dataframe(pd.DataFrame(beacons, columns=["x", "y", "z"]), use_container_width=True)
@@ -309,7 +292,6 @@ st.pyplot(fig, clear_figure=True)
 
     st.info("Wyniki pojawią się po kliknięciu **Uruchom**.")
 
-
 # ============================================================
 # Tab: VLS TDOA
 # ============================================================
@@ -317,7 +299,6 @@ st.pyplot(fig, clear_figure=True)
 with tabs[1]:
     require_out()
     st.subheader("VLS: TDOA (bez Dopplera)")
-
     show_metrics(out["summary_vls_noD"])
 
     col1, col2 = st.columns(2)
@@ -329,7 +310,6 @@ with tabs[1]:
                    "Błąd pozycji w czasie – VLS: TDOA",
                    "e(t) VLS(TDOA)")
 
-
 # ============================================================
 # Tab: VLS TDOA + Doppler
 # ============================================================
@@ -337,10 +317,10 @@ with tabs[1]:
 with tabs[2]:
     require_out()
     st.subheader("VLS: TDOA + Doppler (per-epoka, LS ważony)")
-
     show_metrics(out["summary_vls_D"])
 
-    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)", value=False, key="show_vr_vls")
+    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
+                          value=False, key="show_vr_vls")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -356,7 +336,6 @@ with tabs[2]:
         plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_vlsD"],
                            "v_r(t) – VLS: TDOA + Doppler")
 
-
 # ============================================================
 # Tab: EKF TDOA
 # ============================================================
@@ -364,7 +343,6 @@ with tabs[2]:
 with tabs[3]:
     require_out()
     st.subheader("EKF: TDOA (bez Dopplera)")
-
     show_metrics(out["summary_ekf_noD"])
 
     col1, col2 = st.columns(2)
@@ -376,7 +354,6 @@ with tabs[3]:
                    "Błąd pozycji w czasie – EKF: TDOA",
                    "e(t) EKF(TDOA)")
 
-
 # ============================================================
 # Tab: EKF TDOA + Doppler
 # ============================================================
@@ -384,10 +361,10 @@ with tabs[3]:
 with tabs[4]:
     require_out()
     st.subheader("EKF: TDOA + Doppler (robust)")
-
     show_metrics(out["summary_ekf_D"])
 
-    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)", value=False, key="show_vr_ekf")
+    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
+                          value=False, key="show_vr_ekf")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -403,11 +380,6 @@ with tabs[4]:
         plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_ekfD"],
                            "v_r(t) – EKF: TDOA + Doppler")
 
-
-# ============================================================
-# Tab: Comparisons
-# ============================================================
-
 # ============================================================
 # Tab: Comparisons
 # ============================================================
@@ -416,7 +388,6 @@ with tabs[5]:
     require_out()
     st.subheader("Porównania metod")
 
-    # tabela zbiorcza zostaje, bo to wygodne do pracy
     df_sum = pd.DataFrame([
         {"Metoda": "VLS: TDOA", **out["summary_vls_noD"]},
         {"Metoda": "VLS: TDOA + Doppler", **out["summary_vls_D"]},
@@ -427,131 +398,81 @@ with tabs[5]:
 
     t = out["t"]
 
-    # ------------------------------------------------------------
-    # 1) VLS: bez vs z Dopplerem
-    # ------------------------------------------------------------
+    def plot_compare_lines(title: str, series: list[tuple[np.ndarray, str]]):
+        fig = _fig(7.6, 5.0)
+        ax = fig.add_subplot(111)
+        for y, lab in series:
+            ax.plot(t, y, label=lab, linewidth=2)
+        ax.set_title(title)
+        ax.set_xlabel("t [s]")
+        ax.set_ylabel("e(t) [m]")
+        _grid(ax)
+        legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
+        st.pyplot(fig, clear_figure=True)
+
+    def plot_compare_hist(title: str, series: list[tuple[np.ndarray, str]]):
+        fig = _fig(7.6, 5.0)
+        ax = fig.add_subplot(111)
+        for e, lab in series:
+            ax.hist(e, bins=25, alpha=0.65, label=lab)
+        ax.set_title(title)
+        ax.set_xlabel("e [m]")
+        ax.set_ylabel("liczność")
+        _grid(ax)
+        legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
+        st.pyplot(fig, clear_figure=True)
+
     st.markdown("### 1) VLS: bez Dopplera vs z Dopplerem")
-
     col1, col2 = st.columns(2)
     with col1:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, out["e_vls_noD"], label="VLS: TDOA (bez Dopplera)", linewidth=2)
-        ax.plot(t, out["e_vls_D"], label="VLS: TDOA + Doppler", linewidth=2)
-        ax.set_title("Błąd pozycji e(t) – VLS")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax)
-       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
-
-
+        plot_compare_lines("Błąd pozycji e(t) – VLS", [
+            (out["e_vls_noD"], "VLS: bez Dopplera"),
+            (out["e_vls_D"], "VLS: z Dopplerem"),
+        ])
     with col2:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.hist(out["e_vls_noD"], bins=25, alpha=0.65, label="VLS: bez Dopplera")
-        ax.hist(out["e_vls_D"], bins=25, alpha=0.65, label="VLS: z Dopplerem")
-        ax.set_title("Histogram e – VLS")
-        ax.set_xlabel("e [m]")
-        ax.set_ylabel("liczność")
-        _grid(ax)
-       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
+        plot_compare_hist("Histogram e – VLS", [
+            (out["e_vls_noD"], "VLS: bez Dopplera"),
+            (out["e_vls_D"], "VLS: z Dopplerem"),
+        ])
 
-
-    # ------------------------------------------------------------
-    # 2) EKF: bez vs z Dopplerem
-    # ------------------------------------------------------------
     st.markdown("### 2) EKF: bez Dopplera vs z Dopplerem")
-
     col1, col2 = st.columns(2)
     with col1:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, out["e_ekf_noD"], label="EKF: TDOA (bez Dopplera)", linewidth=2)
-        ax.plot(t, out["e_ekf_D"], label="EKF: TDOA + Doppler", linewidth=2)
-        ax.set_title("Błąd pozycji e(t) – EKF")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax)
-        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
-
+        plot_compare_lines("Błąd pozycji e(t) – EKF", [
+            (out["e_ekf_noD"], "EKF: bez Dopplera"),
+            (out["e_ekf_D"], "EKF: z Dopplerem"),
+        ])
     with col2:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.hist(out["e_ekf_noD"], bins=25, alpha=0.65, label="EKF: bez Dopplera")
-        ax.hist(out["e_ekf_D"], bins=25, alpha=0.65, label="EKF: z Dopplerem")
-        ax.set_title("Histogram e – EKF")
-        ax.set_xlabel("e [m]")
-        ax.set_ylabel("liczność")
-        _grid(ax)
-        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
+        plot_compare_hist("Histogram e – EKF", [
+            (out["e_ekf_noD"], "EKF: bez Dopplera"),
+            (out["e_ekf_D"], "EKF: z Dopplerem"),
+        ])
 
-
-    # ------------------------------------------------------------
-    # 3) VLS bez Dopplera vs EKF bez Dopplera
-    # ------------------------------------------------------------
     st.markdown("### 3) VLS bez Dopplera vs EKF bez Dopplera")
-
     col1, col2 = st.columns(2)
     with col1:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, out["e_vls_noD"], label="VLS: TDOA (bez Dopplera)", linewidth=2)
-        ax.plot(t, out["e_ekf_noD"], label="EKF: TDOA (bez Dopplera)", linewidth=2)
-        ax.set_title("Błąd pozycji e(t) – porównanie bez Dopplera")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax)
-       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
-
-
+        plot_compare_lines("Błąd pozycji e(t) – porównanie bez Dopplera", [
+            (out["e_vls_noD"], "VLS: bez Dopplera"),
+            (out["e_ekf_noD"], "EKF: bez Dopplera"),
+        ])
     with col2:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.hist(out["e_vls_noD"], bins=25, alpha=0.65, label="VLS: bez Dopplera")
-        ax.hist(out["e_ekf_noD"], bins=25, alpha=0.65, label="EKF: bez Dopplera")
-        ax.set_title("Histogram e – porównanie bez Dopplera")
-        ax.set_xlabel("e [m]")
-        ax.set_ylabel("liczność")
-        _grid(ax)
-        legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
+        plot_compare_hist("Histogram e – porównanie bez Dopplera", [
+            (out["e_vls_noD"], "VLS: bez Dopplera"),
+            (out["e_ekf_noD"], "EKF: bez Dopplera"),
+        ])
 
-
-    # ------------------------------------------------------------
-    # 4) VLS z Dopplerem vs EKF z Dopplerem
-    # ------------------------------------------------------------
     st.markdown("### 4) VLS z Dopplerem vs EKF z Dopplerem")
-
     col1, col2 = st.columns(2)
     with col1:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, out["e_vls_D"], label="VLS: TDOA + Doppler", linewidth=2)
-        ax.plot(t, out["e_ekf_D"], label="EKF: TDOA + Doppler", linewidth=2)
-        ax.set_title("Błąd pozycji e(t) – porównanie z Dopplerem")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax)
-       legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
-st.pyplot(fig, clear_figure=True)
-
+        plot_compare_lines("Błąd pozycji e(t) – porównanie z Dopplerem", [
+            (out["e_vls_D"], "VLS: z Dopplerem"),
+            (out["e_ekf_D"], "EKF: z Dopplerem"),
+        ])
     with col2:
-        fig = _fig(6.8, 5.0)
-        ax = fig.add_subplot(111)
-        ax.hist(out["e_vls_D"], bins=25, alpha=0.65, label="VLS: z Dopplerem")
-        ax.hist(out["e_ekf_D"], bins=25, alpha=0.65, label="EKF: z Dopplerem")
-        ax.set_title("Histogram e – porównanie z Dopplerem")
-        ax.set_xlabel("e [m]")
-        ax.set_ylabel("liczność")
-        _grid(ax)
-        legend_outside(fig, ax, ncol=1, right=0.80)
-
-
+        plot_compare_hist("Histogram e – porównanie z Dopplerem", [
+            (out["e_vls_D"], "VLS: z Dopplerem"),
+            (out["e_ekf_D"], "EKF: z Dopplerem"),
+        ])
 
 # ============================================================
 # Tab: Monte Carlo
@@ -569,7 +490,6 @@ with tabs[6]:
         st.dataframe(mc["runs"], use_container_width=True)
         st.write("Agregacja (mean/std/min/max)")
         st.dataframe(mc["agg"], use_container_width=True)
-
 
 # ============================================================
 # Tab: Export
@@ -604,7 +524,7 @@ with tabs[7]:
 
         "ekf0_x": out["p_ekf_noD"][:, 0],
         "ekf0_y": out["p_ekf_noD"][:, 1],
-        "ekf0_z": out["p_ekf_noD"][:, 2],
+        "ekf0_z": out["p_ekf_noD"][:, 2,
 
         "ekfD_x": out["p_ekf_D"][:, 0],
         "ekfD_y": out["p_ekf_D"][:, 1],
