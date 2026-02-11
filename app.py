@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,6 +11,7 @@ import streamlit as st
 from core import make_beacons_preset, run_single_experiment, run_monte_carlo
 
 st.set_page_config(page_title="LBL (TDOA) + Doppler – środowisko testowe", layout="wide")
+
 
 # ============================================================
 # Helpers
@@ -23,36 +23,17 @@ def _grid(ax):
 def _set_equal(ax):
     ax.set_aspect("equal", adjustable="box")
 
-def _fig(ax_w=7.2, ax_h=4.8):
-    return plt.figure(figsize=(ax_w, ax_h), dpi=120)
+def _fig(w=7.2, h=4.8):
+    return plt.figure(figsize=(w, h), dpi=120)
 
-def vr_from_pv(p: np.ndarray, v: np.ndarray, beacons: np.ndarray) -> np.ndarray:
-    """
-    p: (K,3)
-    v: (K,3)
-    beacons: (N,3)
-    Returns vr: (K,N), vr_i = u_i^T v
-    """
-    diff = p[:, None, :] - beacons[None, :, :]          # (K,N,3)
-    R = np.linalg.norm(diff, axis=2)
-    R = np.maximum(R, 1e-9)
-    u = diff / R[:, :, None]                            # (K,N,3)
-    vr = np.sum(u * v[:, None, :], axis=2)              # (K,N)
-    return vr
 
 def config_table(config: dict) -> pd.DataFrame:
     rows = []
     b = np.array(config["beacons"], dtype=float)
-
     rows.append(("Liczba beaconów N", b.shape[0], "-"))
-    rows.append(("Beacon referencyjny TDOA", "B1 (stały)", "-"))
-
     rows.append(("c (prędkość dźwięku)", config["acoustics"]["c"], "m/s"))
-    rows.append(("f0 (częstotliwość nośna)", config["acoustics"]["f0"], "Hz"))
-
-    rows.append(("σ_tdoa (TDOA)", config["noise"]["sigma_tdoa"], "s"))
-    rows.append(("σ_dR = c·σ_tdoa", config["acoustics"]["c"] * config["noise"]["sigma_tdoa"], "m"))
-    rows.append(("σ_vr (Doppler jako v_r)", config["noise"]["sigma_vr"], "m/s"))
+    rows.append(("σ_tdoa (szum TDOA)", config["noise"]["sigma_tdoa"], "s"))
+    rows.append(("σ_vr (szum Doppler jako v_r)", config["noise"]["sigma_vr"], "m/s"))
 
     rows.append(("Trajektoria", config["trajectory"]["kind"], "-"))
     rows.append(("T", config["trajectory"]["T"], "s"))
@@ -61,67 +42,45 @@ def config_table(config: dict) -> pd.DataFrame:
     rows.append(("Heading", config["trajectory"]["heading_deg"], "deg"))
     rows.append(("Start x", config["trajectory"]["start_xy"][0], "m"))
     rows.append(("Start y", config["trajectory"]["start_xy"][1], "m"))
-    rows.append(("Głębokość obiektu z", config["trajectory"]["z"], "m"))
+    rows.append(("Głębokość obiektu z (znana)", config["trajectory"]["z"], "m"))
 
-    rows.append(("q_acc (strojenie EKF)", config["filter"]["q_acc"], "m/s²"))
-    rows.append(("robust_k (próg)", config["filter"]["robust_k"], "σ"))
+    g = config.get("gross", {})
+    rows.append(("Błędy grube – enabled", bool(g.get("enabled", False)), "-"))
+    rows.append(("p_gross", g.get("p_gross", 0.0), "-"))
+    rows.append(("gross_R_m", g.get("gross_R_m", 10.0), "m"))
+    rows.append(("gross_vr_mps", g.get("gross_vr_mps", 1.0), "m/s"))
 
-    rows.append(("Błędy grube: włączone", "TAK" if config["gross"]["enabled"] else "NIE", "-"))
-    rows.append(("p_gross (prawdopodobieństwo)", config["gross"]["p_gross"], "-"))
-    rows.append(("gross_R_m (skok w dR)", config["gross"]["gross_R_m"], "m"))
-    rows.append(("gross_vr_mps (skok w vr)", config["gross"]["gross_vr_mps"], "m/s"))
+    f = config.get("filter", {})
+    rows.append(("q_acc (strojenie EKF)", f.get("q_acc", 0.05), "m/s²"))
+    rows.append(("robust_k (EKF)", f.get("robust_k", 3.0), "-"))
 
     return pd.DataFrame(rows, columns=["Parametr", "Wartość", "Jednostka"])
 
-def metric_cards(summary: dict):
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
-    c2.metric("MED [m]", f"{summary['MED']:.3f}")
-    c3.metric("P95 [m]", f"{summary['P95']:.3f}")
-    c4.metric("MAE [m]", f"{summary['MAE']:.3f}")
-    c5.metric("MAX [m]", f"{summary['MAX']:.3f}")
 
 def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
             title: str, label_est: str):
-    """
-    Rysuje w XY:
-      - beacony
-      - trajektorię rzeczywistą (symulacja)
-      - estymatę
-      - start/koniec
-    """
-    # Bezpieczne rzutowanie na XY
     bxy = np.asarray(beacons, dtype=float)[:, 0:2]
     txy = np.asarray(p_true, dtype=float)[:, 0:2]
     exy = np.asarray(p_est, dtype=float)[:, 0:2]
 
-    fig = _fig(6.6, 5.2)
+    fig = _fig(6.8, 5.4)
     ax = fig.add_subplot(111)
 
-    # Beacony (najpierw, ale wysoko w zorder żeby były widoczne)
     ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony", zorder=6)
-
-    # Opisy beaconów (opcjonalnie – jeśli chcesz)
     for i, (x, y) in enumerate(bxy):
         ax.text(x, y, f"B{i+1}", fontsize=9, ha="left", va="bottom", zorder=7)
 
-    # Estymata
     ax.plot(exy[:, 0], exy[:, 1], label=label_est, linewidth=2, alpha=0.95, zorder=4)
+    ax.plot(txy[:, 0], txy[:, 1], label="Pozycja rzeczywista (symulacja)", linestyle="--", linewidth=3, zorder=5)
 
-    # True (na wierzchu)
-    ax.plot(txy[:, 0], txy[:, 1], label="Pozycja rzeczywista (symulacja)",
-            linestyle="--", linewidth=3, zorder=5)
-
-    # Start/Koniec (z true)
     ax.scatter(txy[0, 0], txy[0, 1], marker="o", s=80, label="Start", zorder=8)
     ax.scatter(txy[-1, 0], txy[-1, 1], marker="s", s=80, label="Koniec", zorder=8)
 
-    # Skala osi: uwzględnij beacony i trajektorie
     allx = np.concatenate([bxy[:, 0], txy[:, 0], exy[:, 0]])
     ally = np.concatenate([bxy[:, 1], txy[:, 1], exy[:, 1]])
     xmin, xmax = float(allx.min()), float(allx.max())
     ymin, ymax = float(ally.min()), float(ally.max())
-    pad = 0.08 * max(xmax - xmin, ymax - ymin, 1.0)  # margines
+    pad = 0.08 * max(xmax - xmin, ymax - ymin, 1.0)
     ax.set_xlim(xmin - pad, xmax + pad)
     ax.set_ylim(ymin - pad, ymax + pad)
 
@@ -134,132 +93,114 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
     st.pyplot(fig, clear_figure=True)
 
 
-
-def plot_error_t(t, e, title, label):
-    fig = _fig(6.4, 5.0)
+def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
+    fig = _fig(6.8, 5.0)
     ax = fig.add_subplot(111)
-    ax.plot(t, e, label=label)
+    ax.plot(t, e, label=label, linewidth=2)
     ax.set_title(title)
     ax.set_xlabel("t [s]")
     ax.set_ylabel("e(t) [m]")
-    _grid(ax)
-    ax.legend(loc="upper right")
-    st.pyplot(fig, clear_figure=True)
-
-def plot_vr_panel(out: dict, method: str):
-    """
-    method: "VLS" or "EKF"
-    uses out["v_vls_D"] or out["v_ekf_D"] for predicted vr from estimate
-    """
-    N = out["beacons"].shape[0]
-    b_idx = st.selectbox("Wybierz beacon do podglądu", list(range(1, N + 1)), index=0, key=f"b_{method}")
-    i = int(b_idx) - 1
-
-    t = out["t"]
-    vr_hat = out["vr_hats"][:, i]
-    vr_true = vr_from_pv(out["p_true"], out["v_true"], out["beacons"])[:, i]
-
-    if method == "VLS":
-        vr_pred = vr_from_pv(out["p_vls_D"], out["v_vls_D"], out["beacons"])[:, i]
-        label_est = "v_r z estymaty VLS"
-    else:
-        vr_pred = vr_from_pv(out["p_ekf_D"], out["v_ekf_D"], out["beacons"])[:, i]
-        label_est = "v_r z estymaty EKF"
-
-    fig = _fig(6.8, 4.8)
-    ax = fig.add_subplot(111)
-    ax.plot(t, vr_hat, label="pomiar v_r (Doppler)")
-    ax.plot(t, vr_pred, label=label_est)
-    ax.plot(t, vr_true, label="v_r rzeczywiste (symulacja)", linestyle="--")
-    ax.set_title("Prędkość radialna v_r(t)")
-    ax.set_xlabel("t [s]")
-    ax.set_ylabel("v_r [m/s]")
     _grid(ax)
     ax.legend(loc="best")
     st.pyplot(fig, clear_figure=True)
 
 
+def show_metrics(summary: dict):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
+    c2.metric("MED [m]",  f"{summary['MED']:.3f}")
+    c3.metric("P95 [m]",  f"{summary['P95']:.3f}")
+    c4.metric("MAE [m]",  f"{summary['MAE']:.3f}")
+    c5.metric("MAX [m]",  f"{summary['MAX']:.3f}")
+
+
+def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, vr_pred: np.ndarray | None,
+                       title: str, max_beacons: int = 5):
+    """
+    Plots vr for first few beacons to keep readability.
+    """
+    N = vr_true.shape[1]
+    nb = min(N, max_beacons)
+
+    fig = _fig(10.8, 5.0)
+    ax = fig.add_subplot(111)
+
+    for i in range(nb):
+        ax.plot(t, vr_true[:, i], linewidth=2, label=f"vr_true B{i+1}", alpha=0.9)
+        ax.plot(t, vr_hat[:, i], linewidth=1, linestyle="--", label=f"vr_hat B{i+1}", alpha=0.8)
+        if vr_pred is not None:
+            ax.plot(t, vr_pred[:, i], linewidth=1.5, linestyle=":", label=f"vr_pred B{i+1}", alpha=0.9)
+
+    ax.set_title(title)
+    ax.set_xlabel("t [s]")
+    ax.set_ylabel("v_r [m/s]")
+    _grid(ax)
+    ax.legend(loc="upper right", ncols=2, fontsize=8)
+    st.pyplot(fig, clear_figure=True)
+
+
 # ============================================================
-# Header
+# UI
 # ============================================================
 
 st.title("Środowisko testowe: LBL (TDOA) – VLS vs EKF, bez Dopplera i z Dopplerem")
-st.caption("Porównanie dokładności estymacji pozycji w tych samych scenariuszach (TDOA). Doppler wnosi dodatkową informację o prędkości radialnej v_r.")
+st.caption("Porównanie metod estymacji pozycji w identycznych scenariuszach, z opcją błędów grubych i analizą Dopplera.")
 
-# ============================================================
-# Sidebar
-# ============================================================
+st.sidebar.header("Konfiguracja eksperymentu")
 
-sb = st.sidebar
-sb.header("Konfiguracja eksperymentu")
-
-geom_mode = sb.selectbox("Geometria beaconów", ["Preset", "Ręcznie (tabela)"])
+geom_mode = st.sidebar.selectbox("Geometria beaconów", ["Preset", "Ręcznie (tabela)"])
 
 if geom_mode == "Preset":
-    preset = sb.selectbox("Kształt", ["trójkąt", "kwadrat", "pięciokąt"])
-    radius = sb.number_input("Promień układu [m]", min_value=10.0, value=200.0, step=10.0)
-    bz = sb.number_input("Głębokość beaconów [m]", value=0.0, step=1.0)
+    preset = st.sidebar.selectbox("Kształt", ["kwadrat", "pięciokąt", "trójkąt"])
+    radius = st.sidebar.number_input("Promień układu [m]", min_value=10.0, value=200.0, step=10.0)
+    bz = st.sidebar.number_input("Głębokość beaconów [m]", value=0.0, step=1.0)
     beacons = make_beacons_preset(preset, radius=radius, z=bz)
 else:
-    sb.write("Wklej/edytuj współrzędne beaconów [m].")
+    st.sidebar.write("Wklej/edytuj współrzędne beaconów [m].")
     df_b = pd.DataFrame({"x": [0.0, 200.0, 0.0, 200.0],
                          "y": [0.0, 0.0, 200.0, 200.0],
                          "z": [0.0, 0.0, 0.0, 0.0]})
-    edited = sb.data_editor(df_b, num_rows="dynamic", use_container_width=True)
+    edited = st.sidebar.data_editor(df_b, num_rows="dynamic", use_container_width=True)
     beacons = edited[["x", "y", "z"]].to_numpy(dtype=float)
 
-sb.divider()
+st.sidebar.divider()
 
-with sb.expander("Trajektoria", expanded=True):
-    traj_kind = sb.selectbox("Typ", ["linia", "racetrack"], key="traj_kind")
-    T = sb.number_input("Czas symulacji T [s]", min_value=5.0, value=120.0, step=5.0, key="T")
-    dt = sb.number_input("Krok dt [s]", min_value=0.1, value=1.0, step=0.1, key="dt")
-    speed = sb.number_input("Prędkość [m/s]", min_value=0.0, value=1.5, step=0.1, key="speed")
-    heading = sb.number_input("Heading [deg] (kurs)", value=30.0, step=5.0, key="heading")
-    start_x = sb.number_input("Start x [m]", value=0.0, step=5.0, key="start_x")
-    start_y = sb.number_input("Start y [m]", value=0.0, step=5.0, key="start_y")
-    obj_z = sb.number_input("Głębokość obiektu z [m]", value=30.0, step=1.0, key="obj_z")
+with st.sidebar.expander("Trajektoria", expanded=True):
+    traj_kind = st.selectbox("Typ", ["linia", "racetrack"], key="traj_kind")
+    T = st.number_input("Czas symulacji T [s]", min_value=5.0, value=120.0, step=5.0, key="T")
+    dt = st.number_input("Krok dt [s]", min_value=0.1, value=1.0, step=0.1, key="dt")
+    speed = st.number_input("Prędkość [m/s]", min_value=0.0, value=1.5, step=0.1, key="speed")
+    heading = st.number_input("Heading [deg] (kurs)", value=30.0, step=5.0, key="heading")
+    start_x = st.number_input("Start x [m]", value=0.0, step=5.0, key="start_x")
+    start_y = st.number_input("Start y [m]", value=0.0, step=5.0, key="start_y")
+    obj_z = st.number_input("Głębokość obiektu z [m] (znana)", value=30.0, step=1.0, key="obj_z")
 
-with sb.expander("Akustyka", expanded=False):
-    c = sb.number_input("Prędkość dźwięku c [m/s]", value=1500.0, step=10.0, key="c")
-    f0 = sb.number_input("Częstotliwość nośna f0 [Hz]", value=20000.0, step=1000.0, key="f0")
+with st.sidebar.expander("Akustyka", expanded=False):
+    c = st.number_input("Prędkość dźwięku c [m/s]", value=1500.0, step=10.0, key="c")
 
-with sb.expander("Szumy pomiarów (TDOA + Doppler)", expanded=True):
-    sigma_tdoa = sb.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
-    sigma_vr = sb.number_input("σ_vr (Doppler jako v_r) [m/s]", value=0.05, step=0.01, key="sigma_vr")
-    sb.caption("TDOA liczone zawsze względem B1. Szum TDOA w metrach: σ_dR = c·σ_tdoa.")
+with st.sidebar.expander("Szumy pomiarów", expanded=True):
+    sigma_tdoa = st.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
+    sigma_vr = st.number_input("σ_vr (Doppler jako v_r) [m/s]", value=0.05, step=0.01, key="sigma_vr")
 
-with sb.expander("Błędy grube (symulacja zakłóceń)", expanded=False):
-    enabled_gross = sb.checkbox("Włącz błędy grube", value=False)
+with st.sidebar.expander("Błędy grube (symulacja)", expanded=False):
+    gross_enabled = st.checkbox("Włącz błędy grube", value=False, key="gross_enabled")
+    p_gross = st.number_input("p_gross (prawdopodobieństwo)", min_value=0.0, max_value=1.0, value=0.05, step=0.01, key="p_gross")
+    gross_R_m = st.number_input("Skala błędu grubego TDOA [m]", min_value=0.0, value=10.0, step=1.0, key="gross_R_m")
+    gross_vr_mps = st.number_input("Skala błędu grubego vr [m/s]", min_value=0.0, value=1.0, step=0.1, key="gross_vr_mps")
 
-    sb.caption(
-        "Błąd gruby to rzadki, duży skok w pomiarze (np. multipath, błędna detekcja pingu). "
-        "EKF z odpornością powinien go tłumić lepiej niż metody per-epoka (VLS)."
-    )
+with st.sidebar.expander("EKF (strojenie)", expanded=False):
+    q_acc = st.number_input("q_acc [m/s²]", value=0.05, step=0.01, key="q_acc")
+    robust_k = st.number_input("robust_k [-]", value=3.0, step=0.5, key="robust_k")
 
-    every_k = sb.number_input("Średnio co ile epok ma wystąpić zakłócenie?", min_value=1, value=30, step=1)
-    p_gross = (1.0 / float(every_k)) if enabled_gross else 0.0
+with st.sidebar.expander("Monte-Carlo", expanded=False):
+    do_mc = st.checkbox("Wykonaj Monte-Carlo", value=False, key="do_mc")
+    M = st.number_input("Liczba prób M", min_value=5, value=100, step=10, key="M")
+    seed0 = st.number_input("Seed startowy", min_value=1, value=1, step=1, key="seed0")
 
-    gross_R_m = sb.number_input("Skok w dR [m] (TDOA)", min_value=0.0, value=10.0, step=1.0)
-    gross_vr_mps = sb.number_input("Skok w v_r [m/s] (Doppler)", min_value=0.0, value=1.0, step=0.1)
-
-with sb.expander("Filtr EKF (strojenie + odporność)", expanded=False):
-    q_acc = sb.number_input("q_acc [m/s²] (strojenie)", value=0.05, step=0.01, key="q_acc")
-    robust_k = sb.number_input("robust_k [σ] (próg tłumienia outlierów)", value=3.0, step=0.5)
-
-with sb.expander("Monte-Carlo", expanded=False):
-    do_mc = sb.checkbox("Wykonaj Monte-Carlo", value=False, key="do_mc")
-    M = sb.number_input("Liczba prób M", min_value=5, value=100, step=10, key="M")
-    seed0 = sb.number_input("Seed startowy", min_value=1, value=1, step=1, key="seed0")
-
-run_btn = sb.button("Uruchom", type="primary")
-
-# TDOA always relative to B1
-ref_idx = 0
+run_btn = st.sidebar.button("Uruchom", type="primary")
 
 config = {
     "beacons": beacons.tolist(),
-    "tdoa": {"ref_idx": int(ref_idx)},
     "trajectory": {
         "kind": traj_kind,
         "T": float(T),
@@ -269,10 +210,10 @@ config = {
         "start_xy": [float(start_x), float(start_y)],
         "z": float(obj_z),
     },
-    "acoustics": {"c": float(c), "f0": float(f0)},
+    "acoustics": {"c": float(c)},
     "noise": {"sigma_tdoa": float(sigma_tdoa), "sigma_vr": float(sigma_vr)},
     "gross": {
-        "enabled": bool(enabled_gross),
+        "enabled": bool(gross_enabled),
         "p_gross": float(p_gross),
         "gross_R_m": float(gross_R_m),
         "gross_vr_mps": float(gross_vr_mps),
@@ -280,65 +221,52 @@ config = {
     "filter": {"q_acc": float(q_acc), "robust_k": float(robust_k)},
 }
 
-# ============================================================
-# Tabs
-# ============================================================
-
-tab_geom, tab_vls0, tab_vlsD, tab_ekf0, tab_ekfD, tab_cmp, tab_mc, tab_export = st.tabs([
+tabs = st.tabs([
     "Geometria i parametry",
-    "VLS: TDOA (bez Dopplera)",
+    "VLS: TDOA",
     "VLS: TDOA + Doppler",
-    "EKF: TDOA (bez Dopplera)",
-    "EKF: TDOA + Doppler (robust)",
+    "EKF: TDOA",
+    "EKF: TDOA + Doppler",
     "Porównania",
     "Monte-Carlo",
-    "Eksport"
+    "Eksport",
 ])
 
-# ============================================================
-# Run
-# ============================================================
 
 if "out" not in st.session_state:
     st.session_state["out"] = None
-if "mc_out" not in st.session_state:
-    st.session_state["mc_out"] = None
 
 if run_btn:
     st.session_state["out"] = run_single_experiment(config, seed=int(seed0))
-    st.session_state["mc_out"] = None
 
 out = st.session_state["out"]
 
 def require_out():
     if out is None:
-        st.warning("Najpierw kliknij **Uruchom** w panelu bocznym.")
+        st.warning("Kliknij **Uruchom** w panelu bocznym.")
         st.stop()
 
+
 # ============================================================
-# Geometry tab
+# Tab: Geometry
 # ============================================================
 
-with tab_geom:
-    st.subheader("Podgląd beaconów i parametrów eksperymentu")
+with tabs[0]:
+    st.subheader("Geometria i parametry eksperymentu")
 
-    col1, col2 = st.columns([1.0, 1.0])
-
+    col1, col2 = st.columns([1, 1])
     with col1:
-        fig = _fig(6.6, 5.2)
+        fig = _fig(6.8, 5.4)
         ax = fig.add_subplot(111)
-        ax.scatter(beacons[:, 0], beacons[:, 1], marker="^", s=80, label="Beacony")
-        for i, (x, y, _) in enumerate(beacons):
-            tag = f"B{i+1}"
-            if i == ref_idx:
-                tag += " (ref)"
-            ax.text(x, y, tag, fontsize=10, ha="left", va="bottom")
-        ax.set_title("Geometria beaconów (rzut XY)")
+        bxy = beacons[:, 0:2]
+        ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony")
+        for i, (x, y) in enumerate(bxy):
+            ax.text(x, y, f"B{i+1}", fontsize=9, ha="left", va="bottom")
+        ax.set_title("Rzut XY – geometria beaconów")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
-        _grid(ax)
-        _set_equal(ax)
-        ax.legend(loc="upper right")
+        _grid(ax); _set_equal(ax)
+        ax.legend(loc="best")
         st.pyplot(fig, clear_figure=True)
 
         st.write("Tabela beaconów [m]")
@@ -347,255 +275,238 @@ with tab_geom:
     with col2:
         st.write("Tabela parametrów")
         st.dataframe(config_table(config), use_container_width=True)
-
-        with st.expander("Pokaż konfigurację JSON (reprodukowalność)"):
+        with st.expander("Konfiguracja JSON (reprodukowalność)"):
             st.code(json.dumps(config, indent=2), language="json")
 
-    st.info("Wyniki pojawią się w zakładkach po kliknięciu **Uruchom**.")
+    st.info("Wyniki pojawią się po kliknięciu **Uruchom**.")
+
 
 # ============================================================
-# VLS no Doppler
+# Tab: VLS TDOA
 # ============================================================
 
-with tab_vls0:
+with tabs[1]:
     require_out()
     st.subheader("VLS: TDOA (bez Dopplera)")
 
-    metric_cards(out["summary_vls_noD"])
+    show_metrics(out["summary_vls_noD"])
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(out["p_true"], out["p_vls_noD"], out["beacons"], "Trajektoria (XY)", "Estymata VLS (TDOA)")
+        plot_xy(out["p_true"], out["p_vls_noD"], out["beacons"],
+                "Trajektoria (XY) – VLS: TDOA", "Estymata VLS (TDOA)")
     with col2:
-        plot_error_t(out["t"], out["e_vls_noD"], "Błąd pozycji w czasie", "e(t) – VLS (TDOA)")
+        plot_error(out["t"], out["e_vls_noD"],
+                   "Błąd pozycji w czasie – VLS: TDOA",
+                   "e(t) VLS(TDOA)")
+
 
 # ============================================================
-# VLS Doppler
+# Tab: VLS TDOA + Doppler
 # ============================================================
 
-with tab_vlsD:
+with tabs[2]:
     require_out()
-    st.subheader("VLS: TDOA + Doppler (ważone LS)")
+    st.subheader("VLS: TDOA + Doppler (per-epoka, LS ważony)")
 
-    metric_cards(out["summary_vls_D"])
+    show_metrics(out["summary_vls_D"])
+
+    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)", value=False, key="show_vr_vls")
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(out["p_true"], out["p_vls_D"], out["beacons"], "Trajektoria (XY)", "Estymata VLS (TDOA + Doppler)")
+        plot_xy(out["p_true"], out["p_vls_D"], out["beacons"],
+                "Trajektoria (XY) – VLS: TDOA + Doppler", "Estymata VLS (TDOA + Doppler)")
     with col2:
-        plot_error_t(out["t"], out["e_vls_D"], "Błąd pozycji w czasie", "e(t) – VLS (TDOA + Doppler)")
+        plot_error(out["t"], out["e_vls_D"],
+                   "Błąd pozycji w czasie – VLS: TDOA + Doppler",
+                   "e(t) VLS(TDOA+D)")
 
-    st.divider()
-    show_vr = st.checkbox("Pokaż prędkość radialną v_r(t) (Doppler)", value=False, key="show_vr_vls")
     if show_vr:
-        plot_vr_panel(out, method="VLS")
+        st.write("Porównanie v_r dla pierwszych beaconów (czytelność ograniczona)")
+        plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_vlsD"],
+                           "v_r(t) – VLS: TDOA + Doppler")
+
 
 # ============================================================
-# EKF no Doppler
+# Tab: EKF TDOA
 # ============================================================
 
-with tab_ekf0:
+with tabs[3]:
     require_out()
     st.subheader("EKF: TDOA (bez Dopplera)")
 
-    metric_cards(out["summary_ekf_noD"])
+    show_metrics(out["summary_ekf_noD"])
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(out["p_true"], out["p_ekf_noD"], out["beacons"], "Trajektoria (XY)", "Estymata EKF (TDOA)")
+        plot_xy(out["p_true"], out["p_ekf_noD"], out["beacons"],
+                "Trajektoria (XY) – EKF: TDOA", "Estymata EKF (TDOA)")
     with col2:
-        plot_error_t(out["t"], out["e_ekf_noD"], "Błąd pozycji w czasie", "e(t) – EKF (TDOA)")
+        plot_error(out["t"], out["e_ekf_noD"],
+                   "Błąd pozycji w czasie – EKF: TDOA",
+                   "e(t) EKF(TDOA)")
+
 
 # ============================================================
-# EKF Doppler
+# Tab: EKF TDOA + Doppler
 # ============================================================
 
-with tab_ekfD:
+with tabs[4]:
     require_out()
     st.subheader("EKF: TDOA + Doppler (robust)")
 
-    metric_cards(out["summary_ekf_D"])
+    show_metrics(out["summary_ekf_D"])
+
+    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)", value=False, key="show_vr_ekf")
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(out["p_true"], out["p_ekf_D"], out["beacons"], "Trajektoria (XY)", "Estymata EKF (TDOA + Doppler)")
+        plot_xy(out["p_true"], out["p_ekf_D"], out["beacons"],
+                "Trajektoria (XY) – EKF: TDOA + Doppler", "Estymata EKF (TDOA + Doppler)")
     with col2:
-        plot_error_t(out["t"], out["e_ekf_D"], "Błąd pozycji w czasie", "e(t) – EKF (TDOA + Doppler)")
+        plot_error(out["t"], out["e_ekf_D"],
+                   "Błąd pozycji w czasie – EKF: TDOA + Doppler",
+                   "e(t) EKF(TDOA+D)")
 
-    st.divider()
-    show_vr = st.checkbox("Pokaż prędkość radialną v_r(t) (Doppler)", value=False, key="show_vr_ekf")
     if show_vr:
-        plot_vr_panel(out, method="EKF")
+        st.write("Porównanie v_r dla pierwszych beaconów (czytelność ograniczona)")
+        plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_ekfD"],
+                           "v_r(t) – EKF: TDOA + Doppler")
+
 
 # ============================================================
-# Comparisons
+# Tab: Comparisons
 # ============================================================
 
-with tab_cmp:
+with tabs[5]:
     require_out()
-    t = out["t"]
+    st.subheader("Porównania metod")
 
-    e_vls0 = out["e_vls_noD"]
-    e_vlsD = out["e_vls_D"]
-    e_ekf0 = out["e_ekf_noD"]
-    e_ekfD = out["e_ekf_D"]
-
-    st.subheader("Porównania")
-
-    st.markdown("### 1) VLS: bez Dopplera vs z Dopplerem")
-    df1 = pd.DataFrame([
-        {"Wariant": "VLS: TDOA", **out["summary_vls_noD"]},
-        {"Wariant": "VLS: TDOA + Doppler", **out["summary_vls_D"]},
+    df_sum = pd.DataFrame([
+        {"Metoda": "VLS: TDOA", **out["summary_vls_noD"]},
+        {"Metoda": "VLS: TDOA + Doppler", **out["summary_vls_D"]},
+        {"Metoda": "EKF: TDOA", **out["summary_ekf_noD"]},
+        {"Metoda": "EKF: TDOA + Doppler", **out["summary_ekf_D"]},
     ])
-    st.dataframe(df1, use_container_width=True)
+    st.dataframe(df_sum, use_container_width=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = _fig(6.4, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, e_vls0, label="VLS TDOA")
-        ax.plot(t, e_vlsD, label="VLS TDOA + Doppler")
-        ax.set_title("e(t) – VLS: porównanie")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax); ax.legend(loc="upper right")
-        st.pyplot(fig, clear_figure=True)
-    with col2:
-        fig = _fig(6.4, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, e_vls0 - e_vlsD, label="Δe(t)=e_VLS−e_VLS+D")
-        ax.axhline(0.0, linewidth=1.0)
-        ax.set_title("Δe(t) – VLS: różnica")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("Δe(t) [m]")
-        _grid(ax); ax.legend(loc="upper right")
-        st.pyplot(fig, clear_figure=True)
+    st.markdown("### Porównanie błędu e(t)")
+    fig = _fig(10.8, 5.0)
+    ax = fig.add_subplot(111)
+    ax.plot(out["t"], out["e_vls_noD"], label="VLS: TDOA")
+    ax.plot(out["t"], out["e_vls_D"], label="VLS: TDOA + Doppler")
+    ax.plot(out["t"], out["e_ekf_noD"], label="EKF: TDOA")
+    ax.plot(out["t"], out["e_ekf_D"], label="EKF: TDOA + Doppler")
+    ax.set_title("Błąd pozycji w czasie – wszystkie warianty")
+    ax.set_xlabel("t [s]")
+    ax.set_ylabel("e(t) [m]")
+    _grid(ax)
+    ax.legend(loc="best")
+    st.pyplot(fig, clear_figure=True)
 
-    st.markdown("### 2) EKF: bez Dopplera vs z Dopplerem")
-    df2 = pd.DataFrame([
-        {"Wariant": "EKF: TDOA", **out["summary_ekf_noD"]},
-        {"Wariant": "EKF: TDOA + Doppler", **out["summary_ekf_D"]},
-    ])
-    st.dataframe(df2, use_container_width=True)
+    st.markdown("### VLS + Doppler vs EKF + Doppler (XY)")
+    fig = _fig(6.8, 5.4)
+    ax = fig.add_subplot(111)
+    bxy = out["beacons"][:, 0:2]
+    ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony", zorder=4)
+    ax.plot(out["p_true"][:, 0], out["p_true"][:, 1], linestyle="--", linewidth=3, label="True", zorder=3)
+    ax.plot(out["p_vls_D"][:, 0], out["p_vls_D"][:, 1], linewidth=2, label="VLS: TDOA + Doppler", zorder=2)
+    ax.plot(out["p_ekf_D"][:, 0], out["p_ekf_D"][:, 1], linewidth=2, label="EKF: TDOA + Doppler", zorder=1)
+    ax.set_title("Trajektorie (XY) – porównanie Dopplera")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    _grid(ax); _set_equal(ax)
+    ax.legend(loc="best")
+    st.pyplot(fig, clear_figure=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = _fig(6.4, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, e_ekf0, label="EKF TDOA")
-        ax.plot(t, e_ekfD, label="EKF TDOA + Doppler")
-        ax.set_title("e(t) – EKF: porównanie")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax); ax.legend(loc="upper right")
-        st.pyplot(fig, clear_figure=True)
-    with col2:
-        fig = _fig(6.4, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, e_ekf0 - e_ekfD, label="Δe(t)=e_EKF−e_EKF+D")
-        ax.axhline(0.0, linewidth=1.0)
-        ax.set_title("Δe(t) – EKF: różnica")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("Δe(t) [m]")
-        _grid(ax); ax.legend(loc="upper right")
-        st.pyplot(fig, clear_figure=True)
+    st.markdown("### Histogram błędu (rozkład e)")
+    fig = _fig(10.8, 4.8)
+    ax = fig.add_subplot(111)
+    ax.hist(out["e_vls_noD"], bins=25, alpha=0.6, label="VLS: TDOA")
+    ax.hist(out["e_vls_D"], bins=25, alpha=0.6, label="VLS: TDOA + Doppler")
+    ax.hist(out["e_ekf_noD"], bins=25, alpha=0.6, label="EKF: TDOA")
+    ax.hist(out["e_ekf_D"], bins=25, alpha=0.6, label="EKF: TDOA + Doppler")
+    ax.set_title("Histogram błędu pozycji e")
+    ax.set_xlabel("e [m]")
+    ax.set_ylabel("liczność")
+    _grid(ax)
+    ax.legend(loc="best")
+    st.pyplot(fig, clear_figure=True)
 
-    st.markdown("### 3) VLS z Dopplerem vs EKF z Dopplerem")
-    df3 = pd.DataFrame([
-        {"Wariant": "VLS: TDOA + Doppler", **out["summary_vls_D"]},
-        {"Wariant": "EKF: TDOA + Doppler", **out["summary_ekf_D"]},
-    ])
-    st.dataframe(df3, use_container_width=True)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = _fig(6.4, 5.0)
-        ax = fig.add_subplot(111)
-        ax.plot(t, e_vlsD, label="VLS TDOA + Doppler")
-        ax.plot(t, e_ekfD, label="EKF TDOA + Doppler")
-        ax.set_title("e(t) – VLS vs EKF (z Dopplerem)")
-        ax.set_xlabel("t [s]")
-        ax.set_ylabel("e(t) [m]")
-        _grid(ax); ax.legend(loc="upper right")
-        st.pyplot(fig, clear_figure=True)
-
-    with col2:
-        st.write("Histogram błędu e")
-        fig = _fig(10.5, 4.5)
-        ax = fig.add_subplot(111)
-        ax.hist(e_vlsD, bins=25, alpha=0.65, label="VLS + Doppler")
-        ax.hist(e_ekfD, bins=25, alpha=0.65, label="EKF + Doppler")
-        ax.set_title("Histogram błędu pozycji e")
-        ax.set_xlabel("e [m]")
-        ax.set_ylabel("liczność")
-        _grid(ax); ax.legend(loc="upper right")
-        st.pyplot(fig, clear_figure=True)
 
 # ============================================================
-# Monte Carlo
+# Tab: Monte Carlo
 # ============================================================
 
-with tab_mc:
-    st.subheader("Monte-Carlo (statystyka)")
-    st.caption("Tryb Monte-Carlo uruchamia wiele prób z różnymi seedami i agreguje metryki.")
-
+with tabs[6]:
+    st.subheader("Monte-Carlo")
+    st.caption("Wiele uruchomień z różnymi seedami, agregacja statystyk metryk.")
     if not do_mc:
-        st.info("Zaznacz **Wykonaj Monte-Carlo** w panelu bocznym, a potem kliknij **Uruchom**.")
+        st.info("Zaznacz **Wykonaj Monte-Carlo** w panelu bocznym.")
     else:
         require_out()
-        if st.session_state["mc_out"] is None:
-            st.session_state["mc_out"] = run_monte_carlo(config, M=int(M), seed0=int(seed0))
-        mc = st.session_state["mc_out"]
-
+        mc = run_monte_carlo(config, M=int(M), seed0=int(seed0))
         st.write("Wyniki per próba")
         st.dataframe(mc["runs"], use_container_width=True)
         st.write("Agregacja (mean/std/min/max)")
         st.dataframe(mc["agg"], use_container_width=True)
 
+
 # ============================================================
-# Export
+# Tab: Export
 # ============================================================
 
-with tab_export:
+with tabs[7]:
     require_out()
-    st.subheader("Eksport eksperymentu (reprodukowalność)")
-    st.caption("Paczka zawiera konfigurację, przebiegi czasowe oraz tabelę metryk.")
-
-    t = out["t"]
-    p_true = out["p_true"]
+    st.subheader("Eksport (reprodukowalność)")
+    st.caption("Paczka ZIP: config + timeseries + summary.")
 
     df_sum = pd.DataFrame([
-        {"Wariant": "VLS: TDOA", **out["summary_vls_noD"]},
-        {"Wariant": "VLS: TDOA + Doppler", **out["summary_vls_D"]},
-        {"Wariant": "EKF: TDOA", **out["summary_ekf_noD"]},
-        {"Wariant": "EKF: TDOA + Doppler", **out["summary_ekf_D"]},
+        {"Metoda": "VLS: TDOA", **out["summary_vls_noD"]},
+        {"Metoda": "VLS: TDOA + Doppler", **out["summary_vls_D"]},
+        {"Metoda": "EKF: TDOA", **out["summary_ekf_noD"]},
+        {"Metoda": "EKF: TDOA + Doppler", **out["summary_ekf_D"]},
     ])
 
     df_ts = pd.DataFrame({
-        "t": t,
-        "true_x": p_true[:, 0], "true_y": p_true[:, 1], "true_z": p_true[:, 2],
+        "t": out["t"],
 
-        "vls_noD_x": out["p_vls_noD"][:, 0], "vls_noD_y": out["p_vls_noD"][:, 1], "vls_noD_z": out["p_vls_noD"][:, 2],
-        "vls_D_x": out["p_vls_D"][:, 0], "vls_D_y": out["p_vls_D"][:, 1], "vls_D_z": out["p_vls_D"][:, 2],
+        "true_x": out["p_true"][:, 0],
+        "true_y": out["p_true"][:, 1],
+        "true_z": out["p_true"][:, 2],
 
-        "ekf_noD_x": out["p_ekf_noD"][:, 0], "ekf_noD_y": out["p_ekf_noD"][:, 1], "ekf_noD_z": out["p_ekf_noD"][:, 2],
-        "ekf_D_x": out["p_ekf_D"][:, 0], "ekf_D_y": out["p_ekf_D"][:, 1], "ekf_D_z": out["p_ekf_D"][:, 2],
+        "vls0_x": out["p_vls_noD"][:, 0],
+        "vls0_y": out["p_vls_noD"][:, 1],
+        "vls0_z": out["p_vls_noD"][:, 2],
 
-        "e_vls_noD": out["e_vls_noD"],
-        "e_vls_D": out["e_vls_D"],
-        "e_ekf_noD": out["e_ekf_noD"],
-        "e_ekf_D": out["e_ekf_D"],
+        "vlsD_x": out["p_vls_D"][:, 0],
+        "vlsD_y": out["p_vls_D"][:, 1],
+        "vlsD_z": out["p_vls_D"][:, 2],
+
+        "ekf0_x": out["p_ekf_noD"][:, 0],
+        "ekf0_y": out["p_ekf_noD"][:, 1],
+        "ekf0_z": out["p_ekf_noD"][:, 2],
+
+        "ekfD_x": out["p_ekf_D"][:, 0],
+        "ekfD_y": out["p_ekf_D"][:, 1],
+        "ekfD_z": out["p_ekf_D"][:, 2],
+
+        "e_vls0": out["e_vls_noD"],
+        "e_vlsD": out["e_vls_D"],
+        "e_ekf0": out["e_ekf_noD"],
+        "e_ekfD": out["e_ekf_D"],
     })
 
     mem = io.BytesIO()
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("config.json", json.dumps(config, indent=2))
-        z.writestr("timeseries.csv", df_ts.to_csv(index=False))
-        z.writestr("summary.csv", df_sum.to_csv(index=False))
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("config.json", json.dumps(out["config"], indent=2))
+        zf.writestr("summary.csv", df_sum.to_csv(index=False))
+        zf.writestr("timeseries.csv", df_ts.to_csv(index=False))
 
     st.download_button(
         label="Pobierz paczkę ZIP (config + CSV)",
         data=mem.getvalue(),
         file_name="experiment_bundle.zip",
-        mime="application/zip"
+        mime="application/zip",
     )
