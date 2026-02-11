@@ -400,35 +400,44 @@ with tabs[1]:
 with tabs[2]:
     require_out()
     st.subheader("VLS: TDOA + Doppler (per-epoka, LS ważony)")
+
     show_metrics(out["summary_vls_D"])
 
-    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
-                          value=False, key="show_vr_vls")
+    show_vr = st.checkbox(
+        "Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
+        value=False,
+        key="show_vr_vls"
+    )
+
+    # ✅ checkbox kierunku NA TYM SAMYM poziomie co show_vr
+    show_dir_vls = st.checkbox(
+        "Pokaż kierunek ruchu (strzałki)",
+        value=True,
+        key="show_dir_vlsD"
+    )
 
     col1, col2 = st.columns(2)
-   show_dir_vls = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_vlsD")
 
     with col1:
         plot_xy_with_dir(
-            out["p_true"], out["p_vls_D"], out["beacons"],
+            out["p_true"],
+            out["p_vls_D"],
+            out["beacons"],
             "Trajektoria (XY) – VLS: TDOA + Doppler",
             "Estymata VLS (TDOA + Doppler)",
-            v_dir=out["v_true"],          # ✅ zawsze jest
+            v_dir=out["v_true"],
             show_dir=show_dir_vls,
             dir_step=12,
             dir_len_frac=0.08
         )
 
-
     with col2:
-        plot_error(out["t"], out["e_vls_D"],
-                   "Błąd pozycji w czasie – VLS: TDOA + Doppler",
-                   "e(t) VLS(TDOA+D)")
-
-    if show_vr:
-        st.write("Porównanie v_r dla pierwszych beaconów (czytelność ograniczona)")
-        plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_vlsD"],
-                           "v_r(t) – VLS: TDOA + Doppler")
+        plot_error(
+            out["t"],
+            out["e_vls_D"],
+            "Błąd pozycji w czasie – VLS: TDOA + Doppler",
+            "e(t) VLS(TDOA+D)"
+        )
 
 # ============================================================
 # Tab: EKF TDOA
