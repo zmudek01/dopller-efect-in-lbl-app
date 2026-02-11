@@ -182,6 +182,9 @@ with st.sidebar.expander("Trajektoria", expanded=True):
 
 with st.sidebar.expander("Akustyka", expanded=False):
     c = st.sidebar.number_input("Prędkość dźwięku c [m/s]", value=1500.0, step=10.0, key="c")
+with st.sidebar.expander("Doppler (model)", expanded=False):
+    full_jacobian = st.sidebar.checkbox("Pełny Jacobian Dopplera (∂v_r/∂p)", value=True)
+
 
 with st.sidebar.expander("Szumy pomiarów", expanded=True):
     sigma_t = st.sidebar.number_input("σ_t (TOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_t")
@@ -220,6 +223,8 @@ config = {
         "heading_deg": float(heading),
         "start_xy": [float(start_x), float(start_y)],
         "z": float(obj_z),
+        "doppler": {"full_jacobian": bool(full_jacobian)},
+
     },
     "acoustics": {"c": float(c)},
     "noise": {"sigma_t": float(sigma_t), "sigma_vr": float(sigma_vr)},
