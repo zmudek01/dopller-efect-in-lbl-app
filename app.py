@@ -441,38 +441,54 @@ with tabs[3]:
 with tabs[4]:
     require_out()
     st.subheader("EKF: TDOA + Doppler (robust)")
+
     show_metrics(out["summary_ekf_D"])
 
-    show_vr = st.checkbox("Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
-                          value=False, key="show_vr_ekf")
-
-    col1, col2 = st.columns(2)
-   show_dir_ekf = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="show_dir_ekfD")
-
-   with col1:
-    plot_xy_with_dir(
-        out["p_true"], out["p_ekf_D"], out["beacons"],
-        "Trajektoria (XY) – EKF: TDOA + Doppler",
-        "Estymata EKF (TDOA + Doppler)",
-        v_dir=out.get("v_ekf_D", out.get("v_true", None)),
-        show_dir=show_dir_ekf,
-        dir_step=12,
-        dir_scale=20.0
+    show_vr = st.checkbox(
+        "Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
+        value=False,
+        key="show_vr_ekf"
     )
 
+    show_dir_ekf = st.checkbox(
+        "Pokaż kierunek ruchu (strzałki)",
+        value=True,
+        key="show_dir_ekfD"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        plot_xy_with_dir(
+            out["p_true"],
+            out["p_ekf_D"],
+            out["beacons"],
+            "Trajektoria (XY) – EKF: TDOA + Doppler",
+            "Estymata EKF (TDOA + Doppler)",
+            v_dir=out.get("v_ekf_D", out.get("v_true", None)),
+            show_dir=show_dir_ekf,
+            dir_step=12,
+            dir_scale=20.0
+        )
+
     with col2:
-        plot_error(out["t"], out["e_ekf_D"],
-                   "Błąd pozycji w czasie – EKF: TDOA + Doppler",
-                   "e(t) EKF(TDOA+D)")
+        plot_error(
+            out["t"],
+            out["e_ekf_D"],
+            "Błąd pozycji w czasie – EKF: TDOA + Doppler",
+            "e(t) EKF(TDOA+D)"
+        )
 
     if show_vr:
         st.write("Porównanie v_r dla pierwszych beaconów (czytelność ograniczona)")
-        plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_ekfD"],
-                           "v_r(t) – EKF: TDOA + Doppler")
+        plot_vr_timeseries(
+            out["t"],
+            out["vr_true"],
+            out["vr_hats"],
+            out["vr_pred_ekfD"],
+            "v_r(t) – EKF: TDOA + Doppler"
+        )
 
-# ============================================================
-# Tab: Comparisons
-# ============================================================
 
 with tabs[5]:
     require_out()
