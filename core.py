@@ -102,32 +102,47 @@ def _ranges_and_u(p: np.ndarray, beacons: np.ndarray) -> tuple[np.ndarray, np.nd
     return R, u
 
 
-def simulate_measurements(p: np.ndarray, v: np.ndarray, beacons: np.ndarray,
-                          c: float, f0: float,
-                          sigma_t: float, sigma_vr: float,
-                          rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+def simulate_measurements_tdoa(p: np.ndarray, v: np.ndarray, beacons: np.ndarray,
+                               c: float,
+                               sigma_tdoa: float, sigma_vr: float,
+                               rng: np.random.Generator,
+                               ref_idx: int = 0,
+                               p_gross: float = 0.0,
+                               gross_R_m: float = 10.0,
+                               gross_vr_mps: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
     """
-    Returns noisy observations:
-      R_hat (N,), vr_hat (N,)
-    sigma_t: std of TOA [s]
-    sigma_vr: std of radial velocity observation [m/s]
+    Zwraca obserwacje:
+      dR_hat (N-1,)   - pomiar TDOA przeskalowany na metry: dR_i = R_i - R_ref
+      vr_hat (N,)     - obserwacja prędkości radialnej dla każdego beacona
     """
-    R_true, u = _ranges_and_u(p, beacons)
-    vr_true = (u @ v)  # (N,)
+    R_true, u = _ranges_and_u(p, beacons)     # (N,), (N,3)
+    vr_true = (u @ v)                         # (N,)
 
-    # TOA noise -> range noise
-    t_hat = R_true / c + rng.normal(0.0, sigma_t, size=R_true.shape)
-    R_hat = c * t_hat
+    # TDOA: dR = (R_i - R_ref) + szum
+    dR_true = R_true - R_true[ref_idx]
+    # generujemy tylko N-1 (pomijamy ref)
+    mask = np.ones(len(R_true), dtype=bool)
+    mask[ref_idx] = False
+    dR_true = dR_true[mask]
 
-    # Doppler -> treat as vr observation with sigma_vr
+    # szum TDOA w sekundach -> metry
+    dR_hat = dR_true + c * rng.normal(0.0, sigma_tdoa, size=dR_true.shape)
+
+    # Doppler jako vr
     vr_hat = vr_true + rng.normal(0.0, sigma_vr, size=vr_true.shape)
 
-    return R_hat, vr_hat
+    # Błędy grube (outliery)
+    if p_gross > 0.0:
+        # dla dR (N-1)
+        out_dR = rng.random(size=dR_hat.shape) < p_gross
+        dR_hat[out_dR] += rng.normal(0.0, gross_R_m, size=np.sum(out_dR))
 
+        # dla vr (N)
+        out_vr = rng.random(size=vr_hat.shape) < p_gross
+        vr_hat[out_vr] += rng.normal(0.0, gross_vr_mps, size=np.sum(out_vr))
 
-# -----------------------------
-# Estimator A: WLS (per epoch) using ranges only
-# -----------------------------
+    return dR_hat, vr_hat
+
 
 def wls_position_from_ranges(R_hat: np.ndarray, beacons: np.ndarray,
                             p0: np.ndarray,
