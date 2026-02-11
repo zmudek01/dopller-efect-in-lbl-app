@@ -109,6 +109,7 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
 
     legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
     st.pyplot(fig, clear_figure=True)
+    
 def plot_xy_with_dir(
     p_true: np.ndarray,
     p_est: np.ndarray,
@@ -118,7 +119,7 @@ def plot_xy_with_dir(
     v_dir: np.ndarray | None = None,
     show_dir: bool = False,
     dir_step: int = 12,
-    dir_len_frac: float = 0.08,   # długość strzałki jako % rozmiaru sceny
+    dir_len_frac: float = 0.08,
 ):
     bxy = np.asarray(beacons, dtype=float)[:, 0:2]
     txy = np.asarray(p_true, dtype=float)[:, 0:2]
@@ -138,7 +139,6 @@ def plot_xy_with_dir(
     ax.scatter(txy[0, 0], txy[0, 1], marker="o", s=80, label="Start", zorder=8)
     ax.scatter(txy[-1, 0], txy[-1, 1], marker="s", s=80, label="Koniec", zorder=8)
 
-    # dopasowanie osi
     allx = np.concatenate([bxy[:, 0], txy[:, 0], exy[:, 0]])
     ally = np.concatenate([bxy[:, 1], txy[:, 1], exy[:, 1]])
     xmin, xmax = float(allx.min()), float(allx.max())
@@ -148,35 +148,39 @@ def plot_xy_with_dir(
     ax.set_xlim(xmin - pad, xmax + pad)
     ax.set_ylim(ymin - pad, ymax + pad)
 
-    # --- Kierunek ruchu: strzałki o stałej długości ---
     if show_dir and (v_dir is not None):
-        v_dir = np.asarray(v_dir, dtype=float)
-        if v_dir.ndim == 2 and v_dir.shape[0] == exy.shape[0] and v_dir.shape[1] >= 2:
-            V = v_dir[:, 0:2]
-            sp = np.linalg.norm(V, axis=1)
-            eps = 1e-12
-            Vn = V / (sp[:, None] + eps)  # normalizacja kierunku
+        try:
+            V = np.asarray(v_dir, dtype=float)
 
-            arrow_len = dir_len_frac * span  # stała długość strzałki w metrach
-            U = Vn[:, 0] * arrow_len
-            W = Vn[:, 1] * arrow_len
+            # Akceptujemy (K,3), (K,2), albo (K,>=2)
+            if V.ndim != 2 or V.shape[0] != exy.shape[0] or V.shape[1] < 2:
+                st.warning(f"Nie rysuję strzałek: v_dir ma shape={getattr(V, 'shape', None)}, a oczekuję (K,2+) gdzie K={exy.shape[0]}.")
+            else:
+                V = V[:, 0:2]
+                sp = np.linalg.norm(V, axis=1)
+                eps = 1e-12
+                Vn = V / (sp[:, None] + eps)  # normalizacja
 
-            step = max(1, int(dir_step))
-            ax.quiver(
-                exy[::step, 0], exy[::step, 1],
-                U[::step], W[::step],
-                angles="xy",
-                scale_units="xy",
-                scale=1.0,          # klucz: 1.0 = wektory w jednostkach osi
-                width=0.004,
-                headwidth=4.5,
-                headlength=6,
-                headaxislength=5.5,
-                zorder=9,
-                label="Kierunek ruchu"
-            )
-        else:
-            st.warning("Nie da się narysować kierunku ruchu: v_dir ma zły kształt (shape).")
+                arrow_len = dir_len_frac * span
+                U = Vn[:, 0] * arrow_len
+                W = Vn[:, 1] * arrow_len
+
+                step = max(1, int(dir_step))
+                ax.quiver(
+                    exy[::step, 0], exy[::step, 1],
+                    U[::step], W[::step],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=1.0,
+                    width=0.004,
+                    headwidth=4.5,
+                    headlength=6,
+                    headaxislength=5.5,
+                    zorder=9,
+                    label="Kierunek ruchu"
+                )
+        except Exception as e:
+            st.error(f"Błąd rysowania strzałek: {type(e).__name__}: {e}")
 
     ax.set_title(title)
     ax.set_xlabel("x [m]")
