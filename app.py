@@ -88,7 +88,7 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
     txy = np.asarray(p_true, dtype=float)[:, 0:2]
     exy = np.asarray(p_est, dtype=float)[:, 0:2]
 
-    fig = _fig(6.8, 5.4)
+    fig = _fig(7.6, 5.4)  # trochę szersza, żeby legenda miała miejsce
     ax = fig.add_subplot(111)
 
     ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony", zorder=6)
@@ -96,7 +96,8 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
         ax.text(x, y, f"B{i+1}", fontsize=9, ha="left", va="bottom", zorder=7)
 
     ax.plot(exy[:, 0], exy[:, 1], label=label_est, linewidth=2, alpha=0.95, zorder=4)
-    ax.plot(txy[:, 0], txy[:, 1], label="Pozycja rzeczywista (symulacja)", linestyle="--", linewidth=3, zorder=5)
+    ax.plot(txy[:, 0], txy[:, 1], label="Pozycja rzeczywista (symulacja)",
+            linestyle="--", linewidth=3, zorder=5)
 
     ax.scatter(txy[0, 0], txy[0, 1], marker="o", s=80, label="Start", zorder=8)
     ax.scatter(txy[-1, 0], txy[-1, 1], marker="s", s=80, label="Koniec", zorder=8)
@@ -114,40 +115,31 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
     ax.set_ylabel("y [m]")
     _grid(ax)
     _set_equal(ax)
-    legend_outside(fig, ax, ncol=1, right=0.78)
 
+    legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
+    st.pyplot(fig, clear_figure=True)
 
 
 def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
-    fig = _fig(6.8, 5.0)
+    fig = _fig(7.6, 5.0)
     ax = fig.add_subplot(111)
+
     ax.plot(t, e, label=label, linewidth=2)
     ax.set_title(title)
     ax.set_xlabel("t [s]")
     ax.set_ylabel("e(t) [m]")
     _grid(ax)
-    legend_outside(fig, ax, ncol=1, right=0.80)
 
-
-
-def show_metrics(summary: dict):
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
-    c2.metric("MED [m]",  f"{summary['MED']:.3f}")
-    c3.metric("P95 [m]",  f"{summary['P95']:.3f}")
-    c4.metric("MAE [m]",  f"{summary['MAE']:.3f}")
-    c5.metric("MAX [m]",  f"{summary['MAX']:.3f}")
+    legend_outside_right(fig, ax, ncol=1, shrink=0.80, pad=0.02)
+    st.pyplot(fig, clear_figure=True)
 
 
 def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, vr_pred: np.ndarray | None,
                        title: str, max_beacons: int = 5):
-    """
-    Plots vr for first few beacons to keep readability.
-    """
     N = vr_true.shape[1]
     nb = min(N, max_beacons)
 
-    fig = _fig(10.8, 5.0)
+    fig = _fig(12.0, 5.0)
     ax = fig.add_subplot(111)
 
     for i in range(nb):
@@ -160,8 +152,18 @@ def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, v
     ax.set_xlabel("t [s]")
     ax.set_ylabel("v_r [m/s]")
     _grid(ax)
-    legend_outside(fig, ax, ncol=2, right=0.70)
 
+    # dużo serii -> więcej miejsca na legendę
+    legend_outside_right(fig, ax, ncol=2, shrink=0.70, pad=0.02)
+    st.pyplot(fig, clear_figure=True)
+
+def show_metrics(summary: dict):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
+    c2.metric("MED [m]",  f"{summary['MED']:.3f}")
+    c3.metric("P95 [m]",  f"{summary['P95']:.3f}")
+    c4.metric("MAE [m]",  f"{summary['MAE']:.3f}")
+    c5.metric("MAX [m]",  f"{summary['MAX']:.3f}")
 
 
 # ============================================================
