@@ -13,7 +13,10 @@ from core import make_beacons_preset, run_single_experiment, run_monte_carlo
 
 st.set_page_config(page_title="LBL (TDOA) + Doppler – środowisko testowe", layout="wide")
 
-# ---------- Helpers ----------
+# ============================================================
+# Helpers
+# ============================================================
+
 def _grid(ax):
     ax.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.5)
 
@@ -22,6 +25,20 @@ def _set_equal(ax):
 
 def _fig(ax_w=7.2, ax_h=4.8):
     return plt.figure(figsize=(ax_w, ax_h), dpi=120)
+
+def vr_from_pv(p: np.ndarray, v: np.ndarray, beacons: np.ndarray) -> np.ndarray:
+    """
+    p: (K,3)
+    v: (K,3)
+    beacons: (N,3)
+    Returns vr: (K,N), vr_i = u_i^T v
+    """
+    diff = p[:, None, :] - beacons[None, :, :]          # (K,N,3)
+    R = np.linalg.norm(diff, axis=2)
+    R = np.maximum(R, 1e-9)
+    u = diff / R[:, :, None]                            # (K,N,3)
+    vr = np.sum(u * v[:, None, :], axis=2)              # (K,N)
+    return vr
 
 def config_table(config: dict) -> pd.DataFrame:
     rows = []
@@ -56,11 +73,85 @@ def config_table(config: dict) -> pd.DataFrame:
 
     return pd.DataFrame(rows, columns=["Parametr", "Wartość", "Jednostka"])
 
-# ---------- Header ----------
-st.title("Środowisko testowe: LBL (TDOA) – VLS vs EKF, bez Dopplera i z Dopplerem")
-st.caption("Celem jest porównanie metryk błędu pozycji dla tych samych scenariuszy: VLS i EKF, bez Dopplera i z Dopplerem.")
+def metric_cards(summary: dict):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
+    c2.metric("MED [m]", f"{summary['MED']:.3f}")
+    c3.metric("P95 [m]", f"{summary['P95']:.3f}")
+    c4.metric("MAE [m]", f"{summary['MAE']:.3f}")
+    c5.metric("MAX [m]", f"{summary['MAX']:.3f}")
 
-# ---------- Sidebar ----------
+def plot_xy(p_true, p_est, beacons_xy, title, label_est):
+    fig = _fig(6.4, 5.0)
+    ax = fig.add_subplot(111)
+    ax.plot(p_true[:, 0], p_true[:, 1], label="Trajektoria rzeczywista", linestyle="--", linewidth=2)
+    ax.plot(p_est[:, 0], p_est[:, 1], label=label_est, linewidth=2)
+    ax.scatter(beacons_xy[:, 0], beacons_xy[:, 1], marker="^", s=80, label="Beacony")
+    ax.scatter(p_true[0, 0], p_true[0, 1], marker="o", s=70, label="Start")
+    ax.scatter(p_true[-1, 0], p_true[-1, 1], marker="s", s=70, label="Koniec")
+    ax.set_title(title)
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    _grid(ax)
+    _set_equal(ax)
+    ax.legend(loc="best")
+    st.pyplot(fig, clear_figure=True)
+
+def plot_error_t(t, e, title, label):
+    fig = _fig(6.4, 5.0)
+    ax = fig.add_subplot(111)
+    ax.plot(t, e, label=label)
+    ax.set_title(title)
+    ax.set_xlabel("t [s]")
+    ax.set_ylabel("e(t) [m]")
+    _grid(ax)
+    ax.legend(loc="upper right")
+    st.pyplot(fig, clear_figure=True)
+
+def plot_vr_panel(out: dict, method: str):
+    """
+    method: "VLS" or "EKF"
+    uses out["v_vls_D"] or out["v_ekf_D"] for predicted vr from estimate
+    """
+    N = out["beacons"].shape[0]
+    b_idx = st.selectbox("Wybierz beacon do podglądu", list(range(1, N + 1)), index=0, key=f"b_{method}")
+    i = int(b_idx) - 1
+
+    t = out["t"]
+    vr_hat = out["vr_hats"][:, i]
+    vr_true = vr_from_pv(out["p_true"], out["v_true"], out["beacons"])[:, i]
+
+    if method == "VLS":
+        vr_pred = vr_from_pv(out["p_vls_D"], out["v_vls_D"], out["beacons"])[:, i]
+        label_est = "v_r z estymaty VLS"
+    else:
+        vr_pred = vr_from_pv(out["p_ekf_D"], out["v_ekf_D"], out["beacons"])[:, i]
+        label_est = "v_r z estymaty EKF"
+
+    fig = _fig(6.8, 4.8)
+    ax = fig.add_subplot(111)
+    ax.plot(t, vr_hat, label="pomiar v_r (Doppler)")
+    ax.plot(t, vr_pred, label=label_est)
+    ax.plot(t, vr_true, label="v_r rzeczywiste (symulacja)", linestyle="--")
+    ax.set_title("Prędkość radialna v_r(t)")
+    ax.set_xlabel("t [s]")
+    ax.set_ylabel("v_r [m/s]")
+    _grid(ax)
+    ax.legend(loc="best")
+    st.pyplot(fig, clear_figure=True)
+
+
+# ============================================================
+# Header
+# ============================================================
+
+st.title("Środowisko testowe: LBL (TDOA) – VLS vs EKF, bez Dopplera i z Dopplerem")
+st.caption("Porównanie dokładności estymacji pozycji w tych samych scenariuszach (TDOA). Doppler wnosi dodatkową informację o prędkości radialnej v_r.")
+
+# ============================================================
+# Sidebar
+# ============================================================
+
 sb = st.sidebar
 sb.header("Konfiguracja eksperymentu")
 
@@ -98,19 +189,17 @@ with sb.expander("Akustyka", expanded=False):
 with sb.expander("Szumy pomiarów (TDOA + Doppler)", expanded=True):
     sigma_tdoa = sb.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
     sigma_vr = sb.number_input("σ_vr (Doppler jako v_r) [m/s]", value=0.05, step=0.01, key="sigma_vr")
-    sb.caption("Szum TDOA jest przeliczany na metry: σ_dR = c·σ_tdoa. TDOA liczone względem beacona B1.")
+    sb.caption("TDOA liczone zawsze względem B1. Szum TDOA w metrach: σ_dR = c·σ_tdoa.")
 
 with sb.expander("Błędy grube (symulacja zakłóceń)", expanded=False):
     enabled_gross = sb.checkbox("Włącz błędy grube", value=False)
 
     sb.caption(
         "Błąd gruby to rzadki, duży skok w pomiarze (np. multipath, błędna detekcja pingu). "
-        "EKF z odpornością powinien go tłumić lepiej niż VLS."
+        "EKF z odpornością powinien go tłumić lepiej niż metody per-epoka (VLS)."
     )
 
-    # UI „ludzki”: częstotliwość zamiast p
     every_k = sb.number_input("Średnio co ile epok ma wystąpić zakłócenie?", min_value=1, value=30, step=1)
-    # p_gross ≈ 1/k
     p_gross = (1.0 / float(every_k)) if enabled_gross else 0.0
 
     gross_R_m = sb.number_input("Skok w dR [m] (TDOA)", min_value=0.0, value=10.0, step=1.0)
@@ -127,7 +216,7 @@ with sb.expander("Monte-Carlo", expanded=False):
 
 run_btn = sb.button("Uruchom", type="primary")
 
-# TDOA zawsze względem B1
+# TDOA always relative to B1
 ref_idx = 0
 
 config = {
@@ -153,7 +242,10 @@ config = {
     "filter": {"q_acc": float(q_acc), "robust_k": float(robust_k)},
 }
 
-# ---------- Tabs ----------
+# ============================================================
+# Tabs
+# ============================================================
+
 tab_geom, tab_vls0, tab_vlsD, tab_ekf0, tab_ekfD, tab_cmp, tab_mc, tab_export = st.tabs([
     "Geometria i parametry",
     "VLS: TDOA (bez Dopplera)",
@@ -165,7 +257,30 @@ tab_geom, tab_vls0, tab_vlsD, tab_ekf0, tab_ekfD, tab_cmp, tab_mc, tab_export = 
     "Eksport"
 ])
 
-# --- Geometry & params ---
+# ============================================================
+# Run
+# ============================================================
+
+if "out" not in st.session_state:
+    st.session_state["out"] = None
+if "mc_out" not in st.session_state:
+    st.session_state["mc_out"] = None
+
+if run_btn:
+    st.session_state["out"] = run_single_experiment(config, seed=int(seed0))
+    st.session_state["mc_out"] = None
+
+out = st.session_state["out"]
+
+def require_out():
+    if out is None:
+        st.warning("Najpierw kliknij **Uruchom** w panelu bocznym.")
+        st.stop()
+
+# ============================================================
+# Geometry tab
+# ============================================================
+
 with tab_geom:
     st.subheader("Podgląd beaconów i parametrów eksperymentu")
 
@@ -198,129 +313,86 @@ with tab_geom:
         with st.expander("Pokaż konfigurację JSON (reprodukowalność)"):
             st.code(json.dumps(config, indent=2), language="json")
 
-    st.info("Wyniki pojawią się w zakładkach po kliknięciu **Uruchom** w panelu bocznym.")
+    st.info("Wyniki pojawią się w zakładkach po kliknięciu **Uruchom**.")
 
-# Run only when button clicked
-if "out" not in st.session_state:
-    st.session_state["out"] = None
-if "mc_out" not in st.session_state:
-    st.session_state["mc_out"] = None
+# ============================================================
+# VLS no Doppler
+# ============================================================
 
-if run_btn:
-    st.session_state["out"] = run_single_experiment(config, seed=int(seed0))
-    st.session_state["mc_out"] = None  # reset
-
-out = st.session_state["out"]
-
-def require_out():
-    if out is None:
-        st.warning("Najpierw kliknij **Uruchom** w panelu bocznym.")
-        st.stop()
-
-def metric_cards(summary: dict):
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("RMSE [m]", f"{summary['RMSE']:.3f}")
-    c2.metric("MED [m]", f"{summary['MED']:.3f}")
-    c3.metric("P95 [m]", f"{summary['P95']:.3f}")
-    c4.metric("MAE [m]", f"{summary['MAE']:.3f}")
-    c5.metric("MAX [m]", f"{summary['MAX']:.3f}")
-
-def plot_xy(p_true, p_est, beacons_xy, title, label_est):
-    fig = _fig(6.4, 5.0)
-    ax = fig.add_subplot(111)
-    ax.plot(p_true[:, 0], p_true[:, 1], label="Trajektoria rzeczywista", linestyle="--", linewidth=2)
-    ax.plot(p_est[:, 0], p_est[:, 1], label=label_est, linewidth=2)
-    ax.scatter(beacons_xy[:, 0], beacons_xy[:, 1], marker="^", s=80, label="Beacony")
-    ax.scatter(p_true[0, 0], p_true[0, 1], marker="o", s=70, label="Start")
-    ax.scatter(p_true[-1, 0], p_true[-1, 1], marker="s", s=70, label="Koniec")
-    ax.set_title(title)
-    ax.set_xlabel("x [m]")
-    ax.set_ylabel("y [m]")
-    _grid(ax)
-    _set_equal(ax)
-    ax.legend(loc="best")
-    st.pyplot(fig, clear_figure=True)
-
-def plot_error_t(t, e, title, label):
-    fig = _fig(6.4, 5.0)
-    ax = fig.add_subplot(111)
-    ax.plot(t, e, label=label)
-    ax.set_title(title)
-    ax.set_xlabel("t [s]")
-    ax.set_ylabel("e(t) [m]")
-    _grid(ax)
-    ax.legend(loc="upper right")
-    st.pyplot(fig, clear_figure=True)
-
-# --- VLS no Doppler ---
 with tab_vls0:
     require_out()
-    t = out["t"]
-    p_true = out["p_true"]
-    p_est = out["p_vls_noD"]
-    e = out["e_vls_noD"]
     st.subheader("VLS: TDOA (bez Dopplera)")
 
     metric_cards(out["summary_vls_noD"])
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(p_true, p_est, out["beacons"], "Trajektoria (XY)", "Estymata VLS (TDOA)")
+        plot_xy(out["p_true"], out["p_vls_noD"], out["beacons"], "Trajektoria (XY)", "Estymata VLS (TDOA)")
     with col2:
-        plot_error_t(t, e, "Błąd pozycji w czasie", "e(t) – VLS (TDOA)")
+        plot_error_t(out["t"], out["e_vls_noD"], "Błąd pozycji w czasie", "e(t) – VLS (TDOA)")
 
-# --- VLS Doppler ---
+# ============================================================
+# VLS Doppler
+# ============================================================
+
 with tab_vlsD:
     require_out()
-    t = out["t"]
-    p_true = out["p_true"]
-    p_est = out["p_vls_D"]
-    e = out["e_vls_D"]
-    st.subheader("VLS: TDOA + Doppler")
+    st.subheader("VLS: TDOA + Doppler (ważone LS)")
 
     metric_cards(out["summary_vls_D"])
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(p_true, p_est, out["beacons"], "Trajektoria (XY)", "Estymata VLS (TDOA + Doppler)")
+        plot_xy(out["p_true"], out["p_vls_D"], out["beacons"], "Trajektoria (XY)", "Estymata VLS (TDOA + Doppler)")
     with col2:
-        plot_error_t(t, e, "Błąd pozycji w czasie", "e(t) – VLS (TDOA + Doppler)")
+        plot_error_t(out["t"], out["e_vls_D"], "Błąd pozycji w czasie", "e(t) – VLS (TDOA + Doppler)")
 
-# --- EKF no Doppler ---
+    st.divider()
+    show_vr = st.checkbox("Pokaż prędkość radialną v_r(t) (Doppler)", value=False, key="show_vr_vls")
+    if show_vr:
+        plot_vr_panel(out, method="VLS")
+
+# ============================================================
+# EKF no Doppler
+# ============================================================
+
 with tab_ekf0:
     require_out()
-    t = out["t"]
-    p_true = out["p_true"]
-    p_est = out["p_ekf_noD"]
-    e = out["e_ekf_noD"]
     st.subheader("EKF: TDOA (bez Dopplera)")
 
     metric_cards(out["summary_ekf_noD"])
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(p_true, p_est, out["beacons"], "Trajektoria (XY)", "Estymata EKF (TDOA)")
+        plot_xy(out["p_true"], out["p_ekf_noD"], out["beacons"], "Trajektoria (XY)", "Estymata EKF (TDOA)")
     with col2:
-        plot_error_t(t, e, "Błąd pozycji w czasie", "e(t) – EKF (TDOA)")
+        plot_error_t(out["t"], out["e_ekf_noD"], "Błąd pozycji w czasie", "e(t) – EKF (TDOA)")
 
-# --- EKF Doppler robust ---
+# ============================================================
+# EKF Doppler
+# ============================================================
+
 with tab_ekfD:
     require_out()
-    t = out["t"]
-    p_true = out["p_true"]
-    p_est = out["p_ekf_D"]
-    e = out["e_ekf_D"]
     st.subheader("EKF: TDOA + Doppler (robust)")
 
     metric_cards(out["summary_ekf_D"])
 
     col1, col2 = st.columns(2)
     with col1:
-        plot_xy(p_true, p_est, out["beacons"], "Trajektoria (XY)", "Estymata EKF (TDOA + Doppler)")
+        plot_xy(out["p_true"], out["p_ekf_D"], out["beacons"], "Trajektoria (XY)", "Estymata EKF (TDOA + Doppler)")
     with col2:
-        plot_error_t(t, e, "Błąd pozycji w czasie", "e(t) – EKF (TDOA + Doppler)")
+        plot_error_t(out["t"], out["e_ekf_D"], "Błąd pozycji w czasie", "e(t) – EKF (TDOA + Doppler)")
 
-# --- Comparisons ---
+    st.divider()
+    show_vr = st.checkbox("Pokaż prędkość radialną v_r(t) (Doppler)", value=False, key="show_vr_ekf")
+    if show_vr:
+        plot_vr_panel(out, method="EKF")
+
+# ============================================================
+# Comparisons
+# ============================================================
+
 with tab_cmp:
     require_out()
     t = out["t"]
@@ -408,6 +480,7 @@ with tab_cmp:
         ax.set_ylabel("e(t) [m]")
         _grid(ax); ax.legend(loc="upper right")
         st.pyplot(fig, clear_figure=True)
+
     with col2:
         st.write("Histogram błędu e")
         fig = _fig(10.5, 4.5)
@@ -420,10 +493,14 @@ with tab_cmp:
         _grid(ax); ax.legend(loc="upper right")
         st.pyplot(fig, clear_figure=True)
 
-# --- Monte-Carlo ---
+# ============================================================
+# Monte Carlo
+# ============================================================
+
 with tab_mc:
     st.subheader("Monte-Carlo (statystyka)")
     st.caption("Tryb Monte-Carlo uruchamia wiele prób z różnymi seedami i agreguje metryki.")
+
     if not do_mc:
         st.info("Zaznacz **Wykonaj Monte-Carlo** w panelu bocznym, a potem kliknij **Uruchom**.")
     else:
@@ -437,11 +514,14 @@ with tab_mc:
         st.write("Agregacja (mean/std/min/max)")
         st.dataframe(mc["agg"], use_container_width=True)
 
-# --- Export ---
+# ============================================================
+# Export
+# ============================================================
+
 with tab_export:
     require_out()
     st.subheader("Eksport eksperymentu (reprodukowalność)")
-    st.caption("Paczka zawiera konfigurację oraz przebiegi czasowe i tabelę metryk.")
+    st.caption("Paczka zawiera konfigurację, przebiegi czasowe oraz tabelę metryk.")
 
     t = out["t"]
     p_true = out["p_true"]
