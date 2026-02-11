@@ -118,15 +118,8 @@ def plot_xy_with_dir(
     v_dir: np.ndarray | None = None,
     show_dir: bool = False,
     dir_step: int = 12,
-    dir_scale: float = 20.0
+    dir_len_frac: float = 0.08,   # długość strzałki jako % rozmiaru sceny
 ):
-    """
-    v_dir: (K,3) albo (K,2) – wektory prędkości do pokazania na XY.
-           Najczęściej: out["v_true"] (symulacja) albo out["v_ekf_D"] / out["v_vls_D"].
-    show_dir: czy rysować strzałki
-    dir_step: co ile próbek rysować strzałkę (żeby nie było 1000 strzałek)
-    dir_scale: skala quiver (większa = mniejsze strzałki)
-    """
     bxy = np.asarray(beacons, dtype=float)[:, 0:2]
     txy = np.asarray(p_true, dtype=float)[:, 0:2]
     exy = np.asarray(p_est, dtype=float)[:, 0:2]
@@ -145,30 +138,45 @@ def plot_xy_with_dir(
     ax.scatter(txy[0, 0], txy[0, 1], marker="o", s=80, label="Start", zorder=8)
     ax.scatter(txy[-1, 0], txy[-1, 1], marker="s", s=80, label="Koniec", zorder=8)
 
-    # --- Kierunek ruchu (strzałki) ---
-    if show_dir and (v_dir is not None):
-        v_dir = np.asarray(v_dir, dtype=float)
-        if v_dir.shape[1] >= 2:
-            step = max(1, int(dir_step))
-            ax.quiver(
-                exy[::step, 0], exy[::step, 1],
-                v_dir[::step, 0], v_dir[::step, 1],
-                angles="xy",
-                scale_units="xy",
-                scale=dir_scale,
-                width=0.004,
-                zorder=9,
-                label="Kierunek ruchu (v)"
-            )
-
-    # osie
+    # dopasowanie osi
     allx = np.concatenate([bxy[:, 0], txy[:, 0], exy[:, 0]])
     ally = np.concatenate([bxy[:, 1], txy[:, 1], exy[:, 1]])
     xmin, xmax = float(allx.min()), float(allx.max())
     ymin, ymax = float(ally.min()), float(ally.max())
-    pad = 0.08 * max(xmax - xmin, ymax - ymin, 1.0)
+    span = max(xmax - xmin, ymax - ymin, 1.0)
+    pad = 0.08 * span
     ax.set_xlim(xmin - pad, xmax + pad)
     ax.set_ylim(ymin - pad, ymax + pad)
+
+    # --- Kierunek ruchu: strzałki o stałej długości ---
+    if show_dir and (v_dir is not None):
+        v_dir = np.asarray(v_dir, dtype=float)
+        if v_dir.ndim == 2 and v_dir.shape[0] == exy.shape[0] and v_dir.shape[1] >= 2:
+            V = v_dir[:, 0:2]
+            sp = np.linalg.norm(V, axis=1)
+            eps = 1e-12
+            Vn = V / (sp[:, None] + eps)  # normalizacja kierunku
+
+            arrow_len = dir_len_frac * span  # stała długość strzałki w metrach
+            U = Vn[:, 0] * arrow_len
+            W = Vn[:, 1] * arrow_len
+
+            step = max(1, int(dir_step))
+            ax.quiver(
+                exy[::step, 0], exy[::step, 1],
+                U[::step], W[::step],
+                angles="xy",
+                scale_units="xy",
+                scale=1.0,          # klucz: 1.0 = wektory w jednostkach osi
+                width=0.004,
+                headwidth=4.5,
+                headlength=6,
+                headaxislength=5.5,
+                zorder=9,
+                label="Kierunek ruchu"
+            )
+        else:
+            st.warning("Nie da się narysować kierunku ruchu: v_dir ma zły kształt (shape).")
 
     ax.set_title(title)
     ax.set_xlabel("x [m]")
@@ -178,6 +186,7 @@ def plot_xy_with_dir(
 
     legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
     st.pyplot(fig, clear_figure=True)
+
 
 
 def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
