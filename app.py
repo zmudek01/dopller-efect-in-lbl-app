@@ -26,20 +26,20 @@ def _set_equal(ax):
 def _fig(w=7.2, h=4.8):
     return plt.figure(figsize=(w, h), dpi=120)
 
-def legend_outside(fig, ax, ncol: int = 1, right: float = 0.80):
+def legend_outside(fig, ax, ncol: int = 1):
     """
-    Legenda poza wykresem (po prawej) bez ucinania w Streamlit.
-    right: ile miejsca zostawić na wykres (0.80 = 20% na legendę)
+    Legenda poza wykresem (po prawej) – wersja pewna dla Streamlit.
     """
     ax.legend(
         loc="center left",
         bbox_to_anchor=(1.02, 0.5),
-        borderaxespad=0.0,
         frameon=True,
         ncol=ncol
     )
-    fig.tight_layout(rect=[0, 0, right, 1])
-    st.pyplot(fig, clear_figure=True)
+
+    # To jest KLUCZOWE
+    st.pyplot(fig, clear_figure=True, bbox_inches="tight")
+
 
 def config_table(config: dict) -> pd.DataFrame:
     rows = []
