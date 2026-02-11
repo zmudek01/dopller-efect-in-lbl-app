@@ -26,6 +26,20 @@ def _set_equal(ax):
 def _fig(w=7.2, h=4.8):
     return plt.figure(figsize=(w, h), dpi=120)
 
+def legend_outside(fig, ax, ncol: int = 1, right: float = 0.80):
+    """
+    Legenda poza wykresem (po prawej) bez ucinania w Streamlit.
+    right: ile miejsca zostawić na wykres (0.80 = 20% na legendę)
+    """
+    ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        borderaxespad=0.0,
+        frameon=True,
+        ncol=ncol
+    )
+    fig.tight_layout(rect=[0, 0, right, 1])
+    st.pyplot(fig, clear_figure=True)
 
 def config_table(config: dict) -> pd.DataFrame:
     rows = []
@@ -89,8 +103,8 @@ def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
     ax.set_ylabel("y [m]")
     _grid(ax)
     _set_equal(ax)
-    ax.legend(loc="best")
-    st.pyplot(fig, clear_figure=True)
+    legend_outside(fig, ax, ncol=1, right=0.78)
+
 
 
 def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
@@ -101,8 +115,8 @@ def plot_error(t: np.ndarray, e: np.ndarray, title: str, label: str):
     ax.set_xlabel("t [s]")
     ax.set_ylabel("e(t) [m]")
     _grid(ax)
-    ax.legend(loc="best")
-    st.pyplot(fig, clear_figure=True)
+    legend_outside(fig, ax, ncol=1, right=0.80)
+
 
 
 def show_metrics(summary: dict):
@@ -135,8 +149,8 @@ def plot_vr_timeseries(t: np.ndarray, vr_true: np.ndarray, vr_hat: np.ndarray, v
     ax.set_xlabel("t [s]")
     ax.set_ylabel("v_r [m/s]")
     _grid(ax)
-    ax.legend(loc="upper right", ncols=2, fontsize=8)
-    st.pyplot(fig, clear_figure=True)
+    legend_outside(fig, ax, ncol=2, right=0.70)
+
 
 
 # ============================================================
@@ -266,8 +280,8 @@ with tabs[0]:
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
         _grid(ax); _set_equal(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+        legend_outside(fig, ax, ncol=1, right=0.80)
+
 
         st.write("Tabela beaconów [m]")
         st.dataframe(pd.DataFrame(beacons, columns=["x", "y", "z"]), use_container_width=True)
@@ -515,8 +529,8 @@ with tabs[5]:
         ax.set_xlabel("e [m]")
         ax.set_ylabel("liczność")
         _grid(ax)
-        ax.legend(loc="best")
-        st.pyplot(fig, clear_figure=True)
+        legend_outside(fig, ax, ncol=1, right=0.80)
+
 
 
 # ============================================================
