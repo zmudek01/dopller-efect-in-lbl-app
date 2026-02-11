@@ -81,32 +81,49 @@ def metric_cards(summary: dict):
     c4.metric("MAE [m]", f"{summary['MAE']:.3f}")
     c5.metric("MAX [m]", f"{summary['MAX']:.3f}")
 
-def plot_xy(p_true, p_est, beacons_xy, title, label_est):
-    fig = _fig(6.4, 5.0)
+def plot_xy(p_true: np.ndarray, p_est: np.ndarray, beacons: np.ndarray,
+            title: str, label_est: str):
+    """
+    Rysuje w XY:
+      - beacony
+      - trajektorię rzeczywistą (symulacja)
+      - estymatę
+      - start/koniec
+    """
+    # Bezpieczne rzutowanie na XY
+    bxy = np.asarray(beacons, dtype=float)[:, 0:2]
+    txy = np.asarray(p_true, dtype=float)[:, 0:2]
+    exy = np.asarray(p_est, dtype=float)[:, 0:2]
+
+    fig = _fig(6.6, 5.2)
     ax = fig.add_subplot(111)
 
-    # estymata
-    ax.plot(
-        p_est[:, 0], p_est[:, 1],
-        label=label_est,
-        linewidth=2,
-        alpha=0.9,
-        zorder=2
-    )
+    # Beacony (najpierw, ale wysoko w zorder żeby były widoczne)
+    ax.scatter(bxy[:, 0], bxy[:, 1], marker="^", s=90, label="Beacony", zorder=6)
 
-    # trajektoria rzeczywista (na wierzchu)
-    ax.plot(
-        p_true[:, 0], p_true[:, 1],
-        label="Pozycja rzeczywista (symulacja)",
-        linestyle="--",
-        linewidth=3,
-        zorder=3
-    )
+    # Opisy beaconów (opcjonalnie – jeśli chcesz)
+    for i, (x, y) in enumerate(bxy):
+        ax.text(x, y, f"B{i+1}", fontsize=9, ha="left", va="bottom", zorder=7)
 
-    # beacony + start/koniec
-    ax.scatter(beacons_xy[:, 0], beacons_xy[:, 1], marker="^", s=80, label="Beacony", zorder=4)
-    ax.scatter(p_true[0, 0], p_true[0, 1], marker="o", s=70, label="Start", zorder=5)
-    ax.scatter(p_true[-1, 0], p_true[-1, 1], marker="s", s=70, label="Koniec", zorder=5)
+    # Estymata
+    ax.plot(exy[:, 0], exy[:, 1], label=label_est, linewidth=2, alpha=0.95, zorder=4)
+
+    # True (na wierzchu)
+    ax.plot(txy[:, 0], txy[:, 1], label="Pozycja rzeczywista (symulacja)",
+            linestyle="--", linewidth=3, zorder=5)
+
+    # Start/Koniec (z true)
+    ax.scatter(txy[0, 0], txy[0, 1], marker="o", s=80, label="Start", zorder=8)
+    ax.scatter(txy[-1, 0], txy[-1, 1], marker="s", s=80, label="Koniec", zorder=8)
+
+    # Skala osi: uwzględnij beacony i trajektorie
+    allx = np.concatenate([bxy[:, 0], txy[:, 0], exy[:, 0]])
+    ally = np.concatenate([bxy[:, 1], txy[:, 1], exy[:, 1]])
+    xmin, xmax = float(allx.min()), float(allx.max())
+    ymin, ymax = float(ally.min()), float(ally.max())
+    pad = 0.08 * max(xmax - xmin, ymax - ymin, 1.0)  # margines
+    ax.set_xlim(xmin - pad, xmax + pad)
+    ax.set_ylim(ymin - pad, ymax + pad)
 
     ax.set_title(title)
     ax.set_xlabel("x [m]")
@@ -115,6 +132,7 @@ def plot_xy(p_true, p_est, beacons_xy, title, label_est):
     _set_equal(ax)
     ax.legend(loc="best")
     st.pyplot(fig, clear_figure=True)
+
 
 
 def plot_error_t(t, e, title, label):
