@@ -41,15 +41,19 @@ def legend_outside_right(fig, ax, ncol: int = 1, pad: float = 0.02, shrink: floa
         frameon=True,
     )
 
+def _config_hash(cfg: dict) -> str:
+    s = json.dumps(cfg, sort_keys=True).encode("utf-8")
+    return hashlib.md5(s).hexdigest()
+
 def config_table(config: dict) -> pd.DataFrame:
     rows = []
     b = np.array(config["beacons"], dtype=float)
     rows.append(("Liczba beaconów N", b.shape[0], "-"))
     rows.append(("c (prędkość dźwięku)", config["acoustics"]["c"], "m/s"))
     rows.append(("f0 (częstotliwość nośna)", config["acoustics"].get("f0", None), "Hz"))
-
     rows.append(("σ_tdoa (szum TDOA)", config["noise"]["sigma_tdoa"], "s"))
-    rows.append(("σ_vr (szum Doppler jako v_r)", config["noise"]["sigma_vr"], "m/s"))
+    rows.append(("σ_Δf (szum Dopplera)", config["noise"].get("sigma_df", None), "Hz"))
+    rows.append(("σ_vr (wynik z f0 i σ_Δf)", config["noise"]["sigma_vr"], "m/s"))
 
     rows.append(("Trajektoria", config["trajectory"]["kind"], "-"))
     rows.append(("T", config["trajectory"]["T"], "s"))
@@ -156,6 +160,7 @@ def plot_xy_with_dir(
     ax.set_xlim(xmin - pad, xmax + pad)
     ax.set_ylim(ymin - pad, ymax + pad)
 
+    # strzałki kierunku (z prędkości)
     if show_dir and (v_dir is not None):
         V = np.asarray(v_dir, dtype=float)
         if V.ndim == 2 and V.shape[0] == exy.shape[0] and V.shape[1] >= 2:
@@ -233,6 +238,7 @@ st.caption("Porównanie metod estymacji pozycji w identycznych scenariuszach, z 
 
 st.sidebar.header("Konfiguracja eksperymentu")
 
+# --- geometria ---
 geom_mode = st.sidebar.selectbox("Geometria beaconów", ["Preset", "Ręcznie (tabela)"])
 
 if geom_mode == "Preset":
@@ -250,6 +256,7 @@ else:
 
 st.sidebar.divider()
 
+# --- trajektoria ---
 with st.sidebar.expander("Trajektoria", expanded=True):
     traj_kind = st.selectbox("Typ", ["linia", "racetrack"], key="traj_kind")
     T = st.number_input("Czas symulacji T [s]", min_value=5.0, value=120.0, step=5.0, key="T")
@@ -260,29 +267,32 @@ with st.sidebar.expander("Trajektoria", expanded=True):
     start_y = st.number_input("Start y [m]", value=0.0, step=5.0, key="start_y")
     obj_z = st.number_input("Głębokość obiektu z [m] (znana)", value=30.0, step=1.0, key="obj_z")
 
+# --- akustyka (f0 tu jest realnie użyte przez sigma_vr z sigma_df) ---
 with st.sidebar.expander("Akustyka", expanded=False):
     c = st.number_input("Prędkość dźwięku c [m/s]", value=1500.0, step=10.0, key="c")
     f0 = st.number_input("Częstotliwość nośna f0 [Hz]", min_value=100.0, value=25000.0, step=100.0, key="f0")
     sigma_df = st.number_input("σ_Δf (szum Dopplera) [Hz]", min_value=0.0, value=2.0, step=0.1, key="sigma_df")
 
-
+# --- szumy ---
 with st.sidebar.expander("Szumy pomiarów", expanded=True):
     sigma_tdoa = st.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
 
-    # sigma_vr wyliczone z Dopplera w Hz: sigma_vr = (c/f0)*sigma_df
     sigma_vr = (float(c) / max(float(f0), 1e-9)) * float(sigma_df)
-
     st.write(f"σ_vr (wynik z f0 i σ_Δf): **{sigma_vr:.6f} m/s**")
+
+# --- błędy grube ---
 with st.sidebar.expander("Błędy grube (symulacja)", expanded=False):
     gross_enabled = st.checkbox("Włącz błędy grube", value=False, key="gross_enabled")
     p_gross = st.number_input("p_gross (prawdopodobieństwo)", min_value=0.0, max_value=1.0, value=0.05, step=0.01, key="p_gross")
     gross_R_m = st.number_input("Skala błędu grubego TDOA [m]", min_value=0.0, value=10.0, step=1.0, key="gross_R_m")
     gross_vr_mps = st.number_input("Skala błędu grubego vr [m/s]", min_value=0.0, value=1.0, step=0.1, key="gross_vr_mps")
 
+# --- ekf ---
 with st.sidebar.expander("EKF (strojenie)", expanded=False):
     q_acc = st.number_input("q_acc [m/s²]", value=0.05, step=0.01, key="q_acc")
     robust_k = st.number_input("robust_k [-]", value=3.0, step=0.5, key="robust_k")
 
+# --- monte carlo ---
 with st.sidebar.expander("Monte-Carlo", expanded=False):
     do_mc = st.checkbox("Wykonaj Monte-Carlo", value=False, key="do_mc")
     M = st.number_input("Liczba prób M", min_value=5, value=100, step=10, key="M")
@@ -304,8 +314,8 @@ config = {
     "acoustics": {"c": float(c), "f0": float(f0)},
     "noise": {
         "sigma_tdoa": float(sigma_tdoa),
-        "sigma_vr": float(sigma_vr),      # liczone z f0 i sigma_df
-        "sigma_df": float(sigma_df),      # tylko do wglądu/eksportu
+        "sigma_df": float(sigma_df),
+        "sigma_vr": float(sigma_vr),   # to będzie użyte w filtrach/LS jako wariancja vr
     },
     "gross": {
         "enabled": bool(gross_enabled),
@@ -316,21 +326,18 @@ config = {
     "filter": {"q_acc": float(q_acc), "robust_k": float(robust_k)},
 }
 
-# --- auto-invalidacja wyniku, gdy zmieni się config ---
-def _config_hash(cfg: dict) -> str:
-    s = json.dumps(cfg, sort_keys=True).encode("utf-8")
-    return hashlib.md5(s).hexdigest()
+# --- sesja / cache ---
+if "out" not in st.session_state:
+    st.session_state["out"] = None
+if "cfg_hash" not in st.session_state:
+    st.session_state["cfg_hash"] = ""
 
 cfg_hash = _config_hash(config)
-
-if "cfg_hash" not in st.session_state:
-    st.session_state["cfg_hash"] = cfg_hash
-
-# jeśli config się zmienił (np. f0), kasujemy poprzedni wynik
 if st.session_state["cfg_hash"] != cfg_hash:
     st.session_state["cfg_hash"] = cfg_hash
     st.session_state["out"] = None
 
+# tabs
 tabs = st.tabs([
     "Geometria i parametry",
     "VLS: TDOA",
@@ -342,9 +349,6 @@ tabs = st.tabs([
     "Eksport",
 ])
 
-if "out" not in st.session_state:
-    st.session_state["out"] = None
-
 if run_btn:
     st.session_state["out"] = run_single_experiment(config, seed=int(seed0))
 
@@ -354,7 +358,6 @@ def require_out():
     if out is None:
         st.warning("Kliknij **Uruchom** w panelu bocznym.")
         st.stop()
-
 
 # ============================================================
 # Tab 0: Geometry
@@ -390,7 +393,6 @@ with tabs[0]:
 
     st.info("Wyniki pojawią się po kliknięciu **Uruchom**.")
 
-
 # ============================================================
 # Tab 1: VLS TDOA
 # ============================================================
@@ -409,7 +411,6 @@ with tabs[1]:
                    "Błąd pozycji w czasie – VLS: TDOA",
                    "e(t) VLS(TDOA)")
 
-
 # ============================================================
 # Tab 2: VLS TDOA + Doppler
 # ============================================================
@@ -419,26 +420,16 @@ with tabs[2]:
     st.subheader("VLS: TDOA + Doppler (per-epoka, LS ważony)")
     show_metrics(out["summary_vls_D"])
 
-    show_vr_vls = st.checkbox(
-        "Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
-        value=False,
-        key="tab2_show_vr_vls"
-    )
-    show_dir_vls = st.checkbox(
-        "Pokaż kierunek ruchu (strzałki)",
-        value=True,
-        key="tab2_show_dir_vls"
-    )
+    show_vr_vls = st.checkbox("Pokaż v_r (true / pomiar / predykcja)", value=False, key="tab2_show_vr")
+    show_dir_vls = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="tab2_show_dir")
 
     col1, col2 = st.columns(2)
     with col1:
         plot_xy_with_dir(
-            out["p_true"],
-            out["p_vls_D"],
-            out["beacons"],
+            out["p_true"], out["p_vls_D"], out["beacons"],
             "Trajektoria (XY) – VLS: TDOA + Doppler",
             "Estymata VLS (TDOA + Doppler)",
-            v_dir=out["v_true"],
+            v_dir=out.get("v_true", None),
             show_dir=show_dir_vls,
         )
     with col2:
@@ -447,12 +438,8 @@ with tabs[2]:
                    "e(t) VLS(TDOA+D)")
 
     if show_vr_vls:
-        if ("vr_true" in out) and ("vr_hats" in out) and ("vr_pred_vlsD" in out):
-            plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_vlsD"],
-                               "v_r(t) – VLS: TDOA + Doppler")
-        else:
-            st.info("Brak danych vr_* w out (vr_true/vr_hats/vr_pred_vlsD). Jeśli chcesz, dopiszemy to w core.py.")
-
+        plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out.get("vr_pred_vlsD", None),
+                           "v_r(t) – VLS: TDOA + Doppler")
 
 # ============================================================
 # Tab 3: EKF TDOA
@@ -472,7 +459,6 @@ with tabs[3]:
                    "Błąd pozycji w czasie – EKF: TDOA",
                    "e(t) EKF(TDOA)")
 
-
 # ============================================================
 # Tab 4: EKF TDOA + Doppler
 # ============================================================
@@ -482,26 +468,16 @@ with tabs[4]:
     st.subheader("EKF: TDOA + Doppler (robust)")
     show_metrics(out["summary_ekf_D"])
 
-    show_vr_ekf = st.checkbox(
-        "Pokaż prędkości radialne v_r (true / pomiar / predykcja)",
-        value=False,
-        key="tab4_show_vr_ekf"
-    )
-    show_dir_ekf = st.checkbox(
-        "Pokaż kierunek ruchu (strzałki)",
-        value=True,
-        key="tab4_show_dir_ekf"
-    )
+    show_vr_ekf = st.checkbox("Pokaż v_r (true / pomiar / predykcja)", value=False, key="tab4_show_vr")
+    show_dir_ekf = st.checkbox("Pokaż kierunek ruchu (strzałki)", value=True, key="tab4_show_dir")
 
     col1, col2 = st.columns(2)
     with col1:
         plot_xy_with_dir(
-            out["p_true"],
-            out["p_ekf_D"],
-            out["beacons"],
+            out["p_true"], out["p_ekf_D"], out["beacons"],
             "Trajektoria (XY) – EKF: TDOA + Doppler",
             "Estymata EKF (TDOA + Doppler)",
-            v_dir=out["v_true"],
+            v_dir=out.get("v_true", None),
             show_dir=show_dir_ekf,
         )
     with col2:
@@ -510,12 +486,8 @@ with tabs[4]:
                    "e(t) EKF(TDOA+D)")
 
     if show_vr_ekf:
-        if ("vr_true" in out) and ("vr_hats" in out) and ("vr_pred_ekfD" in out):
-            plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out["vr_pred_ekfD"],
-                               "v_r(t) – EKF: TDOA + Doppler")
-        else:
-            st.info("Brak danych vr_* w out (vr_true/vr_hats/vr_pred_ekfD). Jeśli chcesz, dopiszemy to w core.py.")
-
+        plot_vr_timeseries(out["t"], out["vr_true"], out["vr_hats"], out.get("vr_pred_ekfD", None),
+                           "v_r(t) – EKF: TDOA + Doppler")
 
 # ============================================================
 # Tab 5: Comparisons
@@ -547,70 +519,29 @@ with tabs[5]:
         legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
         st.pyplot(fig, clear_figure=True)
 
-    def plot_compare_hist(title: str, series: list[tuple[np.ndarray, str]]):
-        fig = _fig(7.6, 5.0)
-        ax = fig.add_subplot(111)
-        for e, lab in series:
-            ax.hist(e, bins=25, alpha=0.65, label=lab)
-        ax.set_title(title)
-        ax.set_xlabel("e [m]")
-        ax.set_ylabel("liczność")
-        _grid(ax)
-        legend_outside_right(fig, ax, ncol=1, shrink=0.78, pad=0.02)
-        st.pyplot(fig, clear_figure=True)
-
     st.markdown("### 1) VLS: bez Dopplera vs z Dopplerem")
-    col1, col2 = st.columns(2)
-    with col1:
-        plot_compare_lines("Błąd pozycji e(t) – VLS", [
-            (out["e_vls_noD"], "VLS: bez Dopplera"),
-            (out["e_vls_D"], "VLS: z Dopplerem"),
-        ])
-    with col2:
-        plot_compare_hist("Histogram e – VLS", [
-            (out["e_vls_noD"], "VLS: bez Dopplera"),
-            (out["e_vls_D"], "VLS: z Dopplerem"),
-        ])
+    plot_compare_lines("Błąd pozycji e(t) – VLS", [
+        (out["e_vls_noD"], "VLS: bez Dopplera"),
+        (out["e_vls_D"], "VLS: z Dopplerem"),
+    ])
 
     st.markdown("### 2) EKF: bez Dopplera vs z Dopplerem")
-    col1, col2 = st.columns(2)
-    with col1:
-        plot_compare_lines("Błąd pozycji e(t) – EKF", [
-            (out["e_ekf_noD"], "EKF: bez Dopplera"),
-            (out["e_ekf_D"], "EKF: z Dopplerem"),
-        ])
-    with col2:
-        plot_compare_hist("Histogram e – EKF", [
-            (out["e_ekf_noD"], "EKF: bez Dopplera"),
-            (out["e_ekf_D"], "EKF: z Dopplerem"),
-        ])
+    plot_compare_lines("Błąd pozycji e(t) – EKF", [
+        (out["e_ekf_noD"], "EKF: bez Dopplera"),
+        (out["e_ekf_D"], "EKF: z Dopplerem"),
+    ])
 
     st.markdown("### 3) VLS bez Dopplera vs EKF bez Dopplera")
-    col1, col2 = st.columns(2)
-    with col1:
-        plot_compare_lines("Błąd pozycji e(t) – porównanie bez Dopplera", [
-            (out["e_vls_noD"], "VLS: bez Dopplera"),
-            (out["e_ekf_noD"], "EKF: bez Dopplera"),
-        ])
-    with col2:
-        plot_compare_hist("Histogram e – porównanie bez Dopplera", [
-            (out["e_vls_noD"], "VLS: bez Dopplera"),
-            (out["e_ekf_noD"], "EKF: bez Dopplera"),
-        ])
+    plot_compare_lines("Błąd pozycji e(t) – porównanie bez Dopplera", [
+        (out["e_vls_noD"], "VLS: bez Dopplera"),
+        (out["e_ekf_noD"], "EKF: bez Dopplera"),
+    ])
 
     st.markdown("### 4) VLS z Dopplerem vs EKF z Dopplerem")
-    col1, col2 = st.columns(2)
-    with col1:
-        plot_compare_lines("Błąd pozycji e(t) – porównanie z Dopplerem", [
-            (out["e_vls_D"], "VLS: z Dopplerem"),
-            (out["e_ekf_D"], "EKF: z Dopplerem"),
-        ])
-    with col2:
-        plot_compare_hist("Histogram e – porównanie z Dopplerem", [
-            (out["e_vls_D"], "VLS: z Dopplerem"),
-            (out["e_ekf_D"], "EKF: z Dopplerem"),
-        ])
-
+    plot_compare_lines("Błąd pozycji e(t) – porównanie z Dopplerem", [
+        (out["e_vls_D"], "VLS: z Dopplerem"),
+        (out["e_ekf_D"], "EKF: z Dopplerem"),
+    ])
 
 # ============================================================
 # Tab 6: Monte-Carlo
@@ -622,13 +553,11 @@ with tabs[6]:
     if not do_mc:
         st.info("Zaznacz **Wykonaj Monte-Carlo** w panelu bocznym.")
     else:
-        require_out()
         mc = run_monte_carlo(config, M=int(M), seed0=int(seed0))
         st.write("Wyniki per próba")
         st.dataframe(mc["runs"], use_container_width=True)
         st.write("Agregacja (mean/std/min/max)")
         st.dataframe(mc["agg"], use_container_width=True)
-
 
 # ============================================================
 # Tab 7: Export
