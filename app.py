@@ -262,13 +262,17 @@ with st.sidebar.expander("Trajektoria", expanded=True):
 
 with st.sidebar.expander("Akustyka", expanded=False):
     c = st.number_input("Prędkość dźwięku c [m/s]", value=1500.0, step=10.0, key="c")
-    f0 = st.number_input("Częstotliwość nośna f0 [Hz]", value=25000.0, step=1000.0, key="f0")
+    f0 = st.number_input("Częstotliwość nośna f0 [Hz]", min_value=100.0, value=25000.0, step=100.0, key="f0")
+    sigma_df = st.number_input("σ_Δf (szum Dopplera) [Hz]", min_value=0.0, value=2.0, step=0.1, key="sigma_df")
 
 
 with st.sidebar.expander("Szumy pomiarów", expanded=True):
     sigma_tdoa = st.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
-    sigma_vr = st.number_input("σ_vr (Doppler jako v_r) [m/s]", value=0.05, step=0.01, key="sigma_vr")
 
+    # sigma_vr wyliczone z Dopplera w Hz: sigma_vr = (c/f0)*sigma_df
+    sigma_vr = (float(c) / max(float(f0), 1e-9)) * float(sigma_df)
+
+    st.write(f"σ_vr (wynik z f0 i σ_Δf): **{sigma_vr:.6f} m/s**")
 with st.sidebar.expander("Błędy grube (symulacja)", expanded=False):
     gross_enabled = st.checkbox("Włącz błędy grube", value=False, key="gross_enabled")
     p_gross = st.number_input("p_gross (prawdopodobieństwo)", min_value=0.0, max_value=1.0, value=0.05, step=0.01, key="p_gross")
@@ -298,7 +302,11 @@ config = {
         "z": float(obj_z),
     },
     "acoustics": {"c": float(c), "f0": float(f0)},
-    "noise": {"sigma_tdoa": float(sigma_tdoa), "sigma_vr": float(sigma_vr)},
+    "noise": {
+        "sigma_tdoa": float(sigma_tdoa),
+        "sigma_vr": float(sigma_vr),      # liczone z f0 i sigma_df
+        "sigma_df": float(sigma_df),      # tylko do wglądu/eksportu
+    },
     "gross": {
         "enabled": bool(gross_enabled),
         "p_gross": float(p_gross),
