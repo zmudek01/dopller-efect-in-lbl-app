@@ -1,5 +1,6 @@
 # core.py
 from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
@@ -44,9 +45,15 @@ def make_beacons_preset(preset: str, radius: float, z: float = 0.0) -> np.ndarra
     return np.column_stack([x, y, zarr]).astype(float)
 
 
-def make_trajectory(kind: str, T: float, dt: float,
-                    speed: float, heading_deg: float,
-                    start: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def make_trajectory(
+    kind: str,
+    T: float,
+    dt: float,
+    speed: float,
+    heading_deg: float,
+    start: np.ndarray,
+    z: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Returns:
       t: (K,)
@@ -81,26 +88,32 @@ def make_trajectory(kind: str, T: float, dt: float,
         for k in range(K):
             sk = s_mod[k]
             if sk < L:
-                p[k] = np.array([start[0] - L/2 + sk, start[1] - Rr, z])
+                p[k] = np.array([start[0] - L / 2 + sk, start[1] - Rr, z])
                 v[k] = np.array([speed, 0.0, 0.0])
             elif sk < L + np.pi * Rr:
                 phi = (sk - L) / Rr
-                cx, cy = start[0] + L/2, start[1]
-                p[k] = np.array([cx + Rr*np.cos(-np.pi/2 + phi),
-                                 cy + Rr*np.sin(-np.pi/2 + phi), z])
-                v[k] = speed * np.array([-np.sin(-np.pi/2 + phi),
-                                         np.cos(-np.pi/2 + phi), 0.0])
-            elif sk < 2*L + np.pi * Rr:
-                s2 = sk - (L + np.pi*Rr)
-                p[k] = np.array([start[0] + L/2 - s2, start[1] + Rr, z])
+                cx, cy = start[0] + L / 2, start[1]
+                p[k] = np.array(
+                    [cx + Rr * np.cos(-np.pi / 2 + phi),
+                     cy + Rr * np.sin(-np.pi / 2 + phi), z]
+                )
+                v[k] = speed * np.array(
+                    [-np.sin(-np.pi / 2 + phi), np.cos(-np.pi / 2 + phi), 0.0]
+                )
+            elif sk < 2 * L + np.pi * Rr:
+                s2 = sk - (L + np.pi * Rr)
+                p[k] = np.array([start[0] + L / 2 - s2, start[1] + Rr, z])
                 v[k] = np.array([-speed, 0.0, 0.0])
             else:
-                phi = (sk - (2*L + np.pi*Rr)) / Rr
-                cx, cy = start[0] - L/2, start[1]
-                p[k] = np.array([cx + Rr*np.cos(np.pi/2 + phi),
-                                 cy + Rr*np.sin(np.pi/2 + phi), z])
-                v[k] = speed * np.array([-np.sin(np.pi/2 + phi),
-                                         np.cos(np.pi/2 + phi), 0.0])
+                phi = (sk - (2 * L + np.pi * Rr)) / Rr
+                cx, cy = start[0] - L / 2, start[1]
+                p[k] = np.array(
+                    [cx + Rr * np.cos(np.pi / 2 + phi),
+                     cy + Rr * np.sin(np.pi / 2 + phi), z]
+                )
+                v[k] = speed * np.array(
+                    [-np.sin(np.pi / 2 + phi), np.cos(np.pi / 2 + phi), 0.0]
+                )
     else:
         raise ValueError("Unknown trajectory kind.")
 
@@ -108,29 +121,46 @@ def make_trajectory(kind: str, T: float, dt: float,
 
 
 # ============================================================
-# Measurements: TDOA (meters) + Doppler as vr (m/s) + outliers
+# Measurements: TDOA (meters) + Doppler (vr OR df) + outliers
 # ============================================================
 
 def simulate_measurements_tdoa(
-    p3: np.ndarray, v3: np.ndarray,
+    p3: np.ndarray,
+    v3: np.ndarray,
     beacons: np.ndarray,
     c: float,
     sigma_tdoa: float,
-    sigma_vr: float,
     rng: np.random.Generator,
     ref_idx: int = 0,
     gross_enabled: bool = False,
     p_gross: float = 0.0,
     gross_R_m: float = 10.0,
-    gross_vr_mps: float = 1.0
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # Doppler handling:
+    doppler_mode: str = "vr",     # "vr" or "df"
+    f0: float = 25000.0,          # Hz (used when doppler_mode="df")
+    sigma_vr: float = 0.05,       # m/s  (used when doppler_mode="vr" OR as fallback)
+    sigma_df_hz: float | None = None,  # Hz (used when doppler_mode="df"; if None -> derived)
+    gross_vr_mps: float = 1.0,
+    gross_df_hz: float = 30.0
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
     """
     Returns:
-      dR_true: (N-1,)   true TDOA converted to meters: dR_i = R_i - R_ref
+      dR_true: (N-1,)   true TDOA in meters: dR_i = R_i - R_ref
       dR_hat:  (N-1,)   noisy + (optional) gross
-      vr_true: (N,)     true radial velocity u_i^T v
-      vr_hat:  (N,)     noisy + (optional) gross
+
+      vr_true: (N,)     true radial velocity u_i^T v  [m/s]
+      vr_hat:  (N,)     observed radial velocity      [m/s] (always provided for estimators)
+
+      df_true: (N,)     true doppler shift            [Hz] (zeros if mode="vr")
+      df_hat:  (N,)     observed doppler shift        [Hz] (zeros if mode="vr")
+
+      sigma_vr_eff: effective std of vr_hat           [m/s] (depends on f0 in mode="df")
+      sigma_df_used: std used for df noise            [Hz]  (0 in mode="vr")
     """
+    doppler_mode = (doppler_mode or "vr").lower().strip()
+    if doppler_mode not in ("vr", "df"):
+        doppler_mode = "vr"
+
     R_true, u = _ranges_u_3d(p3, beacons)
     vr_true = (u @ v3)
 
@@ -141,18 +171,52 @@ def simulate_measurements_tdoa(
     dR_true = (R_true - R_true[ref_idx])[mask]
     dR_hat = dR_true + c * rng.normal(0.0, sigma_tdoa, size=dR_true.shape)
 
-    vr_hat = vr_true + rng.normal(0.0, sigma_vr, size=vr_true.shape)
+    # Defaults for df outputs
+    df_true = np.zeros_like(vr_true)
+    df_hat = np.zeros_like(vr_true)
+    sigma_df_used = 0.0
+    sigma_vr_eff = float(sigma_vr)
 
+    if doppler_mode == "vr":
+        # direct vr observation
+        vr_hat = vr_true + rng.normal(0.0, sigma_vr, size=vr_true.shape)
+        sigma_vr_eff = float(sigma_vr)
+        sigma_df_used = 0.0
+
+        if gross_enabled and p_gross > 0.0:
+            out_vr = rng.random(size=vr_hat.shape) < p_gross
+            if np.any(out_vr):
+                vr_hat[out_vr] += rng.normal(0.0, gross_vr_mps, size=int(np.sum(out_vr)))
+
+    else:
+        # doppler measured as df (Hz), then converted to vr
+        f0 = float(max(f0, 1e-9))
+        df_true = (f0 / c) * vr_true
+
+        if sigma_df_hz is None:
+            # derive sigma_df from sigma_vr (so user can keep old slider and still get df model)
+            sigma_df_used = (f0 / c) * float(sigma_vr)
+        else:
+            sigma_df_used = float(sigma_df_hz)
+
+        df_hat = df_true + rng.normal(0.0, sigma_df_used, size=df_true.shape)
+
+        if gross_enabled and p_gross > 0.0:
+            out_df = rng.random(size=df_hat.shape) < p_gross
+            if np.any(out_df):
+                df_hat[out_df] += rng.normal(0.0, gross_df_hz, size=int(np.sum(out_df)))
+
+        # convert to vr observation used by solvers
+        vr_hat = (c / f0) * df_hat
+        sigma_vr_eff = (c / f0) * sigma_df_used
+
+    # TDOA gross errors (common for both modes)
     if gross_enabled and p_gross > 0.0:
         out_dR = rng.random(size=dR_hat.shape) < p_gross
         if np.any(out_dR):
             dR_hat[out_dR] += rng.normal(0.0, gross_R_m, size=int(np.sum(out_dR)))
 
-        out_vr = rng.random(size=vr_hat.shape) < p_gross
-        if np.any(out_vr):
-            vr_hat[out_vr] += rng.normal(0.0, gross_vr_mps, size=int(np.sum(out_vr)))
-
-    return dR_true, dR_hat, vr_true, vr_hat
+    return dR_true, dR_hat, vr_true, vr_hat, df_true, df_hat, float(sigma_vr_eff), float(sigma_df_used)
 
 
 # ============================================================
@@ -182,7 +246,6 @@ def wls_xy_from_tdoa(
         dR_pred = (R - R[ref_idx])[mask]
         r = dR_hat - dR_pred
 
-        # Jacobian wrt xy
         Hxy = (u[mask] - u[ref_idx])[:, 0:2]
 
         A = Hxy.T @ Hxy + lm_lambda * np.eye(2)
@@ -220,7 +283,7 @@ def run_vls_tdoa_series(
 
 
 # ============================================================
-# VLS (2D): TDOA + vr on state [x,y,vx,vy] (stable)
+# VLS (2D): TDOA + vr on state [x,y,vx,vy]
 # ============================================================
 
 def wls_xv_from_tdoa_vr(
@@ -263,13 +326,9 @@ def wls_xv_from_tdoa_vr(
 
         H = np.zeros(((N - 1) + N, 4), dtype=float)
 
-        # TDOA: d(dR)/d(xy)
         H[0:(N-1), 0:2] = (u[mask] - u[ref_idx])[:, 0:2] * inv_sdR
-
-        # vr: d(vr)/d(vxy)
         H[(N-1):, 2:4] = u[:, 0:2] * inv_svr
 
-        # vr: d(vr)/d(xy) = ((I - u u^T) v)/R projected to xy
         for i in range(N):
             ui = u[i]
             Ri = R[i]
@@ -362,12 +421,10 @@ def ekf_run_tdoa_2d(
     xs = np.zeros((K, 4), dtype=float)
     Ps = np.zeros((K, 4, 4), dtype=float)
 
-    # CV model
     F = np.eye(4, dtype=float)
     F[0, 2] = dt
     F[1, 3] = dt
 
-    # accel RW noise
     G = np.zeros((4, 2), dtype=float)
     G[0:2, :] = 0.5 * dt**2 * np.eye(2)
     G[2:4, :] = dt * np.eye(2)
@@ -380,7 +437,6 @@ def ekf_run_tdoa_2d(
     base_sigma = np.sqrt(base_var)
 
     for k in range(K):
-        # Predict
         x = F @ x
         P = F @ P @ F.T + Q
 
@@ -402,17 +458,11 @@ def ekf_run_tdoa_2d(
 
         y = z - z_pred
 
-        # Jacobian
         H = np.zeros((M, 4), dtype=float)
-
-        # d(dR)/d(xy)
         H[0:(N-1), 0:2] = (u[mask] - u[ref_idx])[:, 0:2]
 
         if use_doppler:
-            # d(vr)/d(vxy)
             H[(N-1):, 2:4] = u[:, 0:2]
-
-            # d(vr)/d(xy)
             for i in range(N):
                 ui = u[i]
                 Ri = R[i]
@@ -420,7 +470,6 @@ def ekf_run_tdoa_2d(
                 dvr_dp = (v_perp / Ri)
                 H[(N-1) + i, 0:2] = dvr_dp[0:2]
 
-        # Robust: inflate measurement variance if innovation is too large
         scale = np.ones_like(base_sigma)
         big = np.abs(y) > (robust_k * base_sigma)
         if np.any(big):
@@ -466,19 +515,30 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     rng = np.random.default_rng(seed)
 
     beacons = np.array(config["beacons"], dtype=float)
+
+    # acoustics
     c = float(config["acoustics"]["c"])
     f0 = float(config["acoustics"].get("f0", 25000.0))
 
+    # doppler mode
+    doppler_cfg = config.get("doppler", {}) or {}
+    doppler_mode = str(doppler_cfg.get("mode", "vr")).lower().strip()  # "vr" or "df"
 
+    # noises
     sigma_tdoa = float(config["noise"]["sigma_tdoa"])
     sigma_vr = float(config["noise"]["sigma_vr"])
+    sigma_df_hz = config["noise"].get("sigma_df_hz", None)
+    if sigma_df_hz is not None:
+        sigma_df_hz = float(sigma_df_hz)
 
-    gross = config.get("gross", {})
+    gross = config.get("gross", {}) or {}
     gross_enabled = bool(gross.get("enabled", False))
     p_gross = float(gross.get("p_gross", 0.0))
     gross_R_m = float(gross.get("gross_R_m", 10.0))
     gross_vr_mps = float(gross.get("gross_vr_mps", 1.0))
+    gross_df_hz = float(gross.get("gross_df_hz", 30.0))
 
+    # trajectory
     T = float(config["trajectory"]["T"])
     dt = float(config["trajectory"]["dt"])
     speed = float(config["trajectory"]["speed"])
@@ -495,34 +555,53 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     if N < 4:
         raise ValueError("Dla stabilnych wyników TDOA zalecane jest N>=4 (np. kwadrat/pieciokat).")
 
-    # Fixed hidden reference index
+    # fixed hidden reference index
     ref_idx = 0
-    mask = np.ones(N, dtype=bool)
-    mask[ref_idx] = False
 
     dR_true = np.zeros((K, N - 1), dtype=float)
     dR_hats = np.zeros((K, N - 1), dtype=float)
+
     vr_true = np.zeros((K, N), dtype=float)
     vr_hats = np.zeros((K, N), dtype=float)
 
+    df_true = np.zeros((K, N), dtype=float)
+    df_hats = np.zeros((K, N), dtype=float)
+
+    sigma_vr_eff = np.zeros(K, dtype=float)
+    sigma_df_used = np.zeros(K, dtype=float)
+
     for k in range(K):
-        dR_true[k], dR_hats[k], vr_true[k], vr_hats[k] = simulate_measurements_tdoa(
+        (
+            dR_true[k], dR_hats[k],
+            vr_true[k], vr_hats[k],
+            df_true[k], df_hats[k],
+            sigma_vr_eff[k], sigma_df_used[k]
+        ) = simulate_measurements_tdoa(
             p_true[k], v_true[k],
             beacons=beacons,
             c=c,
             sigma_tdoa=sigma_tdoa,
-            sigma_vr=sigma_vr,
             rng=rng,
             ref_idx=ref_idx,
             gross_enabled=gross_enabled,
             p_gross=p_gross,
             gross_R_m=gross_R_m,
-            gross_vr_mps=gross_vr_mps
+            doppler_mode=doppler_mode,
+            f0=f0,
+            sigma_vr=sigma_vr,
+            sigma_df_hz=sigma_df_hz,
+            gross_vr_mps=gross_vr_mps,
+            gross_df_hz=gross_df_hz
         )
 
     sigma_dR = c * sigma_tdoa  # meters
 
-    # initial guesses
+    # IMPORTANT:
+    # estimators use vr_hats, so in mode="df" we should use sigma_vr_eff (depends on f0)
+    # use average across time (they're constant unless you do something dynamic)
+    sigma_vr_for_solvers = float(np.mean(sigma_vr_eff)) if doppler_mode == "df" else float(sigma_vr)
+
+    # initial guess
     p_init = p_true[0].copy()
     p_init[0:2] += np.array([5.0, -5.0], dtype=float)
     p_init[2] = z
@@ -537,7 +616,7 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
         z_known=z,
         ref_idx=ref_idx,
         sigma_dR=sigma_dR,
-        sigma_vr=sigma_vr
+        sigma_vr=sigma_vr_for_solvers
     )
 
     # vr predicted from VLS+D
@@ -560,7 +639,7 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     xs_ekf_noD, _ = ekf_run_tdoa_2d(
         t, dt, beacons, dR_hats, vr_hats,
         sigma_dR=sigma_dR,
-        sigma_vr=sigma_vr,
+        sigma_vr=sigma_vr_for_solvers,
         x0=x0, P0=P0,
         z_known=z,
         ref_idx=ref_idx,
@@ -568,10 +647,11 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
         q_acc=q_acc,
         robust_k=robust_k
     )
+
     xs_ekf_D, _ = ekf_run_tdoa_2d(
         t, dt, beacons, dR_hats, vr_hats,
         sigma_dR=sigma_dR,
-        sigma_vr=sigma_vr,
+        sigma_vr=sigma_vr_for_solvers,
         x0=x0, P0=P0,
         z_known=z,
         ref_idx=ref_idx,
@@ -581,7 +661,7 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
     )
 
     p_ekf_noD = np.column_stack([xs_ekf_noD[:, 0], xs_ekf_noD[:, 1], np.full(K, z)])
-    p_ekf_D   = np.column_stack([xs_ekf_D[:, 0],   xs_ekf_D[:, 1],   np.full(K, z)])
+    p_ekf_D = np.column_stack([xs_ekf_D[:, 0], xs_ekf_D[:, 1], np.full(K, z)])
 
     v_ekf_D = np.column_stack([xs_ekf_D[:, 2], xs_ekf_D[:, 3], np.zeros(K)])
 
@@ -597,9 +677,9 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
 
     # -------- errors --------
     e_vls_noD = position_errors(p_vls_noD, p_true)
-    e_vls_D   = position_errors(p_vls_D,   p_true)
+    e_vls_D = position_errors(p_vls_D, p_true)
     e_ekf_noD = position_errors(p_ekf_noD, p_true)
-    e_ekf_D   = position_errors(p_ekf_D,   p_true)
+    e_ekf_D = position_errors(p_ekf_D, p_true)
 
     return {
         "t": t,
@@ -609,8 +689,18 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
 
         "dR_true": dR_true,
         "dR_hats": dR_hats,
+
+        # always provide vr (solvers + app)
         "vr_true": vr_true,
         "vr_hats": vr_hats,
+
+        # optional extra diagnostics (helps show why f0 matters)
+        "df_true": df_true,
+        "df_hats": df_hats,
+        "sigma_vr_eff": sigma_vr_eff,     # [m/s]
+        "sigma_df_used": sigma_df_used,   # [Hz]
+        "doppler_mode": doppler_mode,
+        "f0": f0,
 
         "p_vls_noD": p_vls_noD,
         "p_vls_D": p_vls_D,
