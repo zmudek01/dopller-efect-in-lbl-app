@@ -467,6 +467,8 @@ def run_single_experiment(config: dict, seed: int = 1) -> dict:
 
     beacons = np.array(config["beacons"], dtype=float)
     c = float(config["acoustics"]["c"])
+    f0 = float(config["acoustics"].get("f0", 25000.0))
+
 
     sigma_tdoa = float(config["noise"]["sigma_tdoa"])
     sigma_vr = float(config["noise"]["sigma_vr"])
