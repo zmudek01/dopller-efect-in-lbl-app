@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-
+import hashlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -315,6 +315,21 @@ config = {
     },
     "filter": {"q_acc": float(q_acc), "robust_k": float(robust_k)},
 }
+
+# --- auto-invalidacja wyniku, gdy zmieni się config ---
+def _config_hash(cfg: dict) -> str:
+    s = json.dumps(cfg, sort_keys=True).encode("utf-8")
+    return hashlib.md5(s).hexdigest()
+
+cfg_hash = _config_hash(config)
+
+if "cfg_hash" not in st.session_state:
+    st.session_state["cfg_hash"] = cfg_hash
+
+# jeśli config się zmienił (np. f0), kasujemy poprzedni wynik
+if st.session_state["cfg_hash"] != cfg_hash:
+    st.session_state["cfg_hash"] = cfg_hash
+    st.session_state["out"] = None
 
 tabs = st.tabs([
     "Geometria i parametry",
