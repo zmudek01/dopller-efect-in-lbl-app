@@ -46,6 +46,8 @@ def config_table(config: dict) -> pd.DataFrame:
     b = np.array(config["beacons"], dtype=float)
     rows.append(("Liczba beaconów N", b.shape[0], "-"))
     rows.append(("c (prędkość dźwięku)", config["acoustics"]["c"], "m/s"))
+    rows.append(("f0 (częstotliwość nośna)", config["acoustics"].get("f0", None), "Hz"))
+
     rows.append(("σ_tdoa (szum TDOA)", config["noise"]["sigma_tdoa"], "s"))
     rows.append(("σ_vr (szum Doppler jako v_r)", config["noise"]["sigma_vr"], "m/s"))
 
@@ -260,6 +262,8 @@ with st.sidebar.expander("Trajektoria", expanded=True):
 
 with st.sidebar.expander("Akustyka", expanded=False):
     c = st.number_input("Prędkość dźwięku c [m/s]", value=1500.0, step=10.0, key="c")
+    f0 = st.number_input("Częstotliwość nośna f0 [Hz]", value=25000.0, step=1000.0, key="f0")
+
 
 with st.sidebar.expander("Szumy pomiarów", expanded=True):
     sigma_tdoa = st.number_input("σ_tdoa (TDOA) [s]", value=1e-4, step=1e-5, format="%.6f", key="sigma_tdoa")
@@ -293,7 +297,7 @@ config = {
         "start_xy": [float(start_x), float(start_y)],
         "z": float(obj_z),
     },
-    "acoustics": {"c": float(c)},
+    "acoustics": {"c": float(c), "f0": float(f0)},
     "noise": {"sigma_tdoa": float(sigma_tdoa), "sigma_vr": float(sigma_vr)},
     "gross": {
         "enabled": bool(gross_enabled),
